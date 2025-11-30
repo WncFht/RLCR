@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
-import trl 
-from trl import ScriptArguments 
-from typing import Optional, Any
-from transformers import TrainingArguments
-from trl import SFTConfig
+from typing import Optional
+
+import trl
+from trl import ScriptArguments
+
 
 @dataclass
 class GRPOScriptArguments(ScriptArguments):
@@ -33,8 +33,12 @@ class GRPOScriptArguments(ScriptArguments):
             "function."
         },
     )
-    dataset_train_split: str = field(default="train", metadata={"help": "Dataset split to use for training."})
-    dataset_test_split: str = field(default="test", metadata={"help": "Dataset split to use for evaluation."})
+    dataset_train_split: str = field(
+        default="train", metadata={"help": "Dataset split to use for training."}
+    )
+    dataset_test_split: str = field(
+        default="test", metadata={"help": "Dataset split to use for evaluation."}
+    )
 
     reward_funcs: list[str] = field(
         default_factory=lambda: ["accuracy", "format"],
@@ -43,19 +47,22 @@ class GRPOScriptArguments(ScriptArguments):
         },
     )
 
-    sys_prompt_name: str = field(default="ver", metadata={"help": "System prompt name."})
+    sys_prompt_name: str = field(
+        default="ver", metadata={"help": "System prompt name."}
+    )
     task_spec: str = field(default="gen", metadata={"help": "Task specification."})
-    set_pad_token: Optional[int] = field(default=None, metadata={"help": "Set the pad token to this id"})
+    set_pad_token: Optional[int] = field(
+        default=None, metadata={"help": "Set the pad token to this id"}
+    )
 
-    orm_key: Optional[str] = field(
-        default="reward")
-    
-    train_subset_size : Optional[int] = field(
+    orm_key: Optional[str] = field(default="reward")
+
+    train_subset_size: Optional[int] = field(
         default=None,
         metadata={"help": "Size of the training subset."},
     )
 
-    eval_subset_size : Optional[int] = field(
+    eval_subset_size: Optional[int] = field(
         default=None,
         metadata={"help": "Size of the evaluation subset."},
     )
@@ -66,7 +73,6 @@ class GRPOScriptArguments(ScriptArguments):
     )
 
 
-
 @dataclass
 class GRPOConfig(trl.GRPOConfig):
     """
@@ -75,7 +81,9 @@ class GRPOConfig(trl.GRPOConfig):
 
     run_name: Optional[str] = field(
         default=None,
-        metadata={"help": "An optional descriptor for the run. Notably used for wandb, mlflow and comet logging."},
+        metadata={
+            "help": "An optional descriptor for the run. Notably used for wandb, mlflow and comet logging."
+        },
     )
 
     # Parameters that control the training
@@ -121,7 +129,6 @@ class GRPOConfig(trl.GRPOConfig):
         metadata={"help": "KL coefficient."},
     )
 
-
     epsilon: float = field(
         default=0.2,
         metadata={"help": "Epsilon value for clipping."},
@@ -144,14 +151,19 @@ class GRPOConfig(trl.GRPOConfig):
     )
 
     callbacks: list[str] = field(
-        default_factory=lambda: [], metadata={"help": "The callbacks to run during training."}
+        default_factory=lambda: [],
+        metadata={"help": "The callbacks to run during training."},
     )
     system_prompt: Optional[str] = field(
-        default=None, metadata={"help": "The optional system prompt to use for benchmarking."}
+        default=None,
+        metadata={"help": "The optional system prompt to use for benchmarking."},
     )
     wandb_project: Optional[str] = field(
         default="RLCR",
         metadata={"help": ("The project to store runs under.")},
+    )
+    wandb_entity: Optional[str] = field(
+        default="rl_confidence", metadata={"help": "Team of Wandb."}
     )
     max_prompt_length: Optional[int] = field(
         default=512,
@@ -165,7 +177,9 @@ class GRPOConfig(trl.GRPOConfig):
     )
     temperature: Optional[float] = field(
         default=0.9,
-        metadata={"help": "Temperature for sampling. The higher the temperature, the more random the completions."},
+        metadata={
+            "help": "Temperature for sampling. The higher the temperature, the more random the completions."
+        },
     )
     max_completion_length: Optional[int] = field(
         default=256,
@@ -204,9 +218,7 @@ class GRPOConfig(trl.GRPOConfig):
 
     vllm_tensor_parallel_size: Optional[int] = field(
         default=1,
-        metadata={
-            "help": "Number of tensor parallel GPUs to use."
-        },
+        metadata={"help": "Number of tensor parallel GPUs to use."},
     )
 
     # Parameters that control the logging
@@ -215,13 +227,15 @@ class GRPOConfig(trl.GRPOConfig):
         metadata={"help": "Whether to log the completions during training."},
     )
 
-    completion_logging_steps: Optional[int] = field(default=5, metadata={"help": "Log completions every n steps."}) 
-    num_completions_to_log: Optional[int] = field(default=3, metadata={"help": "Number of completions to log."})
+    completion_logging_steps: Optional[int] = field(
+        default=5, metadata={"help": "Log completions every n steps."}
+    )
+    num_completions_to_log: Optional[int] = field(
+        default=3, metadata={"help": "Number of completions to log."}
+    )
     eval_log_keys: list[str] = field(
         default_factory=lambda: ["answer", "eval"],
-        metadata={
-            "help": "Keys to log during hf eval"
-        },
+        metadata={"help": "Keys to log during hf eval"},
     )
 
     mask_truncated_completions: bool = field(
@@ -279,7 +293,10 @@ class GRPOConfig(trl.GRPOConfig):
 
         num_processes = self.world_size
         # The current default effective batch size
-        if self.generation_batch_size is not None and self.steps_per_generation is not None:
+        if (
+            self.generation_batch_size is not None
+            and self.steps_per_generation is not None
+        ):
             raise ValueError(
                 "'generation_batch_size' and 'steps_per_generation' can not be both configured at the same time"
             )
@@ -288,18 +305,31 @@ class GRPOConfig(trl.GRPOConfig):
             self.steps_per_generation = self.gradient_accumulation_steps
 
         if self.generation_batch_size is None:
-            self.generation_batch_size = self.per_device_train_batch_size * num_processes * self.steps_per_generation
+            self.generation_batch_size = (
+                self.per_device_train_batch_size
+                * num_processes
+                * self.steps_per_generation
+            )
 
-        if self.generation_batch_size % self.per_device_train_batch_size * num_processes != 0:
+        if (
+            self.generation_batch_size
+            % self.per_device_train_batch_size
+            * num_processes
+            != 0
+        ):
             raise ValueError(
                 f"generation_batch_size ({self.generation_batch_size}) must be divisible by the global batch size "
                 f"({self.per_device_train_batch_size * num_processes})."
             )
 
-        self.steps_per_generation = self.generation_batch_size // (self.per_device_train_batch_size * num_processes)
+        self.steps_per_generation = self.generation_batch_size // (
+            self.per_device_train_batch_size * num_processes
+        )
 
         possible_values = [
-            n_gen for n_gen in range(2, self.generation_batch_size + 1) if (self.generation_batch_size) % n_gen == 0
+            n_gen
+            for n_gen in range(2, self.generation_batch_size + 1)
+            if (self.generation_batch_size) % n_gen == 0
         ]
 
         if self.num_generations not in possible_values:
@@ -309,11 +339,13 @@ class GRPOConfig(trl.GRPOConfig):
                 f"prompt ({self.num_generations}). Given the current effective train batch size, the valid values for "
                 f"the number of generations are: {possible_values}."
             )
-        
+
         if self.eval_strategy != "no":
             global_eval_batch_size = self.per_device_eval_batch_size * num_processes
             possible_values = [
-                n_gen for n_gen in range(2, global_eval_batch_size + 1) if (global_eval_batch_size) % n_gen == 0
+                n_gen
+                for n_gen in range(2, global_eval_batch_size + 1)
+                if (global_eval_batch_size) % n_gen == 0
             ]
             if self.num_generations not in possible_values:
                 raise ValueError(
@@ -322,7 +354,6 @@ class GRPOConfig(trl.GRPOConfig):
                     "current global eval batch size, the valid values for the number of generations are: "
                     f"{possible_values}."
                 )
-
 
 
 @dataclass
@@ -387,7 +418,9 @@ class ModelConfig:
     )
     model_revision: str = field(
         default="main",
-        metadata={"help": "Specific model version to use. It can be a branch name, a tag name, or a commit id."},
+        metadata={
+            "help": "Specific model version to use. It can be a branch name, a tag name, or a commit id."
+        },
     )
     torch_dtype: Optional[str] = field(
         default="auto",
@@ -437,7 +470,9 @@ class ModelConfig:
     )
     lora_task_type: str = field(
         default="CAUSAL_LM",
-        metadata={"help": "Task type to pass for LoRA (use 'SEQ_CLS' for reward modeling)."},
+        metadata={
+            "help": "Task type to pass for LoRA (use 'SEQ_CLS' for reward modeling)."
+        },
     )
     use_rslora: bool = field(
         default=False,
@@ -448,11 +483,15 @@ class ModelConfig:
     )
     load_in_8bit: bool = field(
         default=False,
-        metadata={"help": "Whether to use 8 bit precision for the base model. Works only with LoRA."},
+        metadata={
+            "help": "Whether to use 8 bit precision for the base model. Works only with LoRA."
+        },
     )
     load_in_4bit: bool = field(
         default=False,
-        metadata={"help": "Whether to use 4 bit precision for the base model. Works only with LoRA."},
+        metadata={
+            "help": "Whether to use 4 bit precision for the base model. Works only with LoRA."
+        },
     )
     bnb_4bit_quant_type: str = field(
         default="nf4",
@@ -467,10 +506,8 @@ class ModelConfig:
         if self.load_in_8bit and self.load_in_4bit:
             raise ValueError("You can't use 8 bit and 4 bit precision at the same time")
 
-        if hasattr(self.lora_target_modules, "__len__") and len(self.lora_target_modules) == 1:
+        if (
+            hasattr(self.lora_target_modules, "__len__")
+            and len(self.lora_target_modules) == 1
+        ):
             self.lora_target_modules = self.lora_target_modules[0]
-
-
-
-
-

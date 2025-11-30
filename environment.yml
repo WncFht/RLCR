@@ -1,4 +1,4 @@
-name: rl
+name: rlcr
 channels:
   - conda-forge
 dependencies:
@@ -61,7 +61,7 @@ dependencies:
       - fastapi-cli==0.0.7
       - fastrlock==0.8.3
       - filelock==3.18.0
-      - flash-attn==2.7.4.post1
+      # - flash-attn==2.7.4.post1
       - frozenlist==1.6.0
       - fsspec==2025.3.0
       - gguf==0.10.0

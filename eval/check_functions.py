@@ -1,10 +1,18 @@
-from eval.eval_utils import compute_pass_n, get_brier, get_ece, get_auroc, exact_match_score
-import numpy as np
-from math_verify import verify, parse
-import re
-from vllm import LLM, SamplingParams
 import gc
+import re
+
+import numpy as np
+from eval.eval_utils import (
+    compute_pass_n,
+    exact_match_score,
+    get_auroc,
+    get_brier,
+    get_ece,
+)
+from math_verify import parse, verify
 from transformers import AutoTokenizer
+from vllm import LLM, SamplingParams
+
 
 def confidence_extractor(response, **kwargs):
     """Extracts the confidence from the completions
@@ -12,7 +20,7 @@ def confidence_extractor(response, **kwargs):
     If the float is between 0 and 1, it is returned as is.
     If the float is between 1 and 100, it is divided by 100 and returned.
     If float is not directly found, the first number in the string is extracted and processed as above.
-    If no float is found, 0 is returned.    
+    If no float is found, 0 is returned.
     """
     conf_pattern = r"<confidence>(.*?)</confidence>"
     # Get all <confidence>...</confidence> occurrences
@@ -25,20 +33,20 @@ def confidence_extractor(response, **kwargs):
         try:
             confidence = float(last_confidence)
             if confidence > 1 and confidence <= 100:
-                return 1, confidence/100
+                return 1, confidence / 100
             elif confidence >= 0 and confidence <= 1:
                 return 1, confidence
             else:
                 return 0, 0.0
         except:
             # extract the first number in the string
-            first_number = re.search(r'-?\d+(?:\.\d+)?', last_confidence)
+            first_number = re.search(r"-?\d+(?:\.\d+)?", last_confidence)
             if first_number:
                 first_number = float(first_number.group())
                 if first_number >= 0 and first_number <= 1:
                     return 1, first_number
                 elif first_number > 1 and first_number <= 100:
-                    return 1, first_number/100
+                    return 1, first_number / 100
                 else:
                     return 0, 0.0
             else:
@@ -53,26 +61,31 @@ def gen_correctness_reward(completions, answer, **kwargs):
 
     """
     ans_pattern = r"<answer>(.*?)</answer>"
-    completion_contents = [completion[0]["content"]
-                           for completion in completions]
+    completion_contents = [completion[0]["content"] for completion in completions]
     eval_contents = [e for e in answer]
     matches = []
 
     for content, e in zip(completion_contents, eval_contents):
         # Get all <answer>...</answer> occurrences
-        ans_matches = re.findall(ans_pattern, content,
-                                 re.DOTALL | re.MULTILINE)
+        ans_matches = re.findall(ans_pattern, content, re.DOTALL | re.MULTILINE)
         # Get the last answer, if exists
         last_answer = ans_matches[-1] if ans_matches else ""
         attempt = parse(last_answer)
         label = verify(e, attempt)
-        if label ==0 :
+        if label == 0:
             label = exact_match_score(last_answer, e)
         matches.append(float(label))
 
     return matches
 
-def confidence_verifier(local_dataset, config, format_fn="confidence_format", format_pattern="tabc", **kwargs):
+
+def confidence_verifier(
+    local_dataset,
+    config,
+    format_fn="confidence_format",
+    format_pattern="tabc",
+    **kwargs,
+):
     label_dict = {f"{config.name}-evals": []}
     evals = []
     c_lengths = []
@@ -83,7 +96,7 @@ def confidence_verifier(local_dataset, config, format_fn="confidence_format", fo
     correctness_fn = gen_correctness_reward
 
     if f"{config.name}-class_output" in local_dataset.column_names:
-        #If classification outputs are present (these come from classifier/probe)
+        # If classification outputs are present (these come from classifier/probe)
         class_outputs = local_dataset[f"{config.name}-class_output"]
     else:
         class_outputs = None
@@ -116,7 +129,7 @@ def confidence_verifier(local_dataset, config, format_fn="confidence_format", fo
         conf_format_levels.append(conf_format_list)
 
     ### END OF CHECK CORRECTNESS ###
-     
+
     ### COMPUTE PASS@K ###
     if n not in config.pass_k_vals:
         config.pass_k_vals.append(n)
@@ -130,12 +143,12 @@ def confidence_verifier(local_dataset, config, format_fn="confidence_format", fo
     ### END OF COMPUTE PASS@K ###
 
     if class_outputs is not None:
-        #If classification outputs are present (these come from classifier/probe), then we use the corresponding confidence levels
+        # If classification outputs are present (these come from classifier/probe), then we use the corresponding confidence levels
         if type(class_outputs[0]) == list:
             confidence_levels = [[c[1]] for c in class_outputs]
             print("Overriding confidence levels with classification outputs")
         else:
-            confidence_levels = [ [c] for c in class_outputs]
+            confidence_levels = [[c] for c in class_outputs]
 
     # take mean of c_lengths
     c_length_mean = np.mean(np.array(c_lengths))
@@ -147,15 +160,14 @@ def confidence_verifier(local_dataset, config, format_fn="confidence_format", fo
 
     correctness_array = np.array(evals).flatten()
     confidence_array = np.array(confidence_levels).flatten()
-    metrics["brier_score"] = get_brier(correctness_array, confidence_array) 
+    metrics["brier_score"] = get_brier(correctness_array, confidence_array)
     metrics["ece"] = get_ece(correctness_array, confidence_array)
     metrics["auroc"] = get_auroc(correctness_array, confidence_array)
 
     metrics["accuracy"] = metrics["pass@1"]
     metrics["completion length"] = c_length_mean
     metrics["confidence level"] = np.mean(np.array(confidence_levels))
-    metrics["confidence format adherence"] = np.mean(
-        np.array(conf_format_levels))
+    metrics["confidence format adherence"] = np.mean(np.array(conf_format_levels))
 
     print(f"Metrics of {config.name} =")
     for k, v in metrics.items():
@@ -163,7 +175,13 @@ def confidence_verifier(local_dataset, config, format_fn="confidence_format", fo
     return label_dict, metrics
 
 
-def llm_confidence_verifier(local_dataset, config, judge_model="meta-llama/Llama-3.1-8B-Instruct", format_fn="confidence_format", **kwargs):
+def llm_confidence_verifier(
+    local_dataset,
+    config,
+    judge_model="meta-llama/Llama-3.1-8B-Instruct",
+    format_fn="confidence_format",
+    **kwargs,
+):
     label_dict = {f"{config.name}-evals": []}
     evals = []
     c_lengths = []
@@ -177,7 +195,7 @@ def llm_confidence_verifier(local_dataset, config, judge_model="meta-llama/Llama
     else:
         class_outputs = None
 
-    # FIRST EXTRACT OUT ALL ANSWERS FROM THE MODEL OUTPUTS. 
+    # FIRST EXTRACT OUT ALL ANSWERS FROM THE MODEL OUTPUTS.
     extracted_answers = []
     for i in range(len(local_dataset)):
         q_spec_ans = []
@@ -185,8 +203,7 @@ def llm_confidence_verifier(local_dataset, config, judge_model="meta-llama/Llama
             pred = local_dataset[i][f"{config.name}-output_{j}"]
             ans_pattern = r"<answer>(.*?)</answer>"
             # Get all <answer>...</answer> occurrences
-            ans_matches = re.findall(
-                ans_pattern, pred, re.DOTALL | re.MULTILINE)
+            ans_matches = re.findall(ans_pattern, pred, re.DOTALL | re.MULTILINE)
             # Get the last answer, if exists
             last_answer = ans_matches[-1] if ans_matches else ""
             if last_answer == "":
@@ -205,8 +222,8 @@ def llm_confidence_verifier(local_dataset, config, judge_model="meta-llama/Llama
     prompts = []
     chosen_key = "question" if "question" in local_dataset.column_names else "problem"
     tokenizer = AutoTokenizer.from_pretrained(judge_model, trust_remote_code=True)
-    
-    #Generate prompts for each example
+
+    # Generate prompts for each example
     for i in range(len(local_dataset)):
         for j in range(n):
             prompt = f"""
@@ -214,10 +231,13 @@ def llm_confidence_verifier(local_dataset, config, judge_model="meta-llama/Llama
             Ground Truth Answers: {local_dataset[i]["answer"]}
             Model Generated Answer: {extracted_answers[i][j]}
             """
-            processed_prompt = [{'role': 'system', 'content': sys_prompt}, {
-                'role': 'user', 'content': prompt}]
+            processed_prompt = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": prompt},
+            ]
             tokenized_prompt = tokenizer.apply_chat_template(
-                processed_prompt, truncation=False, add_generation_prompt=True)
+                processed_prompt, truncation=False, add_generation_prompt=True
+            )
             decoded_prompt = tokenizer.decode(tokenized_prompt)
             prompts.append(decoded_prompt)
 
@@ -241,7 +261,7 @@ def llm_confidence_verifier(local_dataset, config, judge_model="meta-llama/Llama
     agg_responses = []
     # agg responses by taking groups of n and making a list of them
     for i in range(0, len(responses), n):
-        agg_responses.append(responses[i:i+n])
+        agg_responses.append(responses[i : i + n])
 
     ####### END OF AGGREGATE RESPONSES #######
 
@@ -271,7 +291,6 @@ def llm_confidence_verifier(local_dataset, config, judge_model="meta-llama/Llama
         confidence_levels.append(conf_list)
         conf_format_levels.append(conf_format_list)
 
-
     if n not in config.pass_k_vals:
         config.pass_k_vals.append(n)
     if 1 not in config.pass_k_vals:
@@ -286,11 +305,11 @@ def llm_confidence_verifier(local_dataset, config, judge_model="meta-llama/Llama
             confidence_levels = [[c[1]] for c in class_outputs]
             print("Overriding confidence levels with class outputs")
         else:
-            confidence_levels = [ [c] for c in class_outputs]
+            confidence_levels = [[c] for c in class_outputs]
 
     correctness_array = np.array(evals).flatten()
     confidence_array = np.array(confidence_levels).flatten()
-    metrics["brier_score"] = get_brier(correctness_array, confidence_array) 
+    metrics["brier_score"] = get_brier(correctness_array, confidence_array)
     metrics["ece"] = get_ece(correctness_array, confidence_array)
     metrics["auroc"] = get_auroc(correctness_array, confidence_array)
 
@@ -305,8 +324,7 @@ def llm_confidence_verifier(local_dataset, config, judge_model="meta-llama/Llama
     metrics["accuracy"] = metrics["pass@1"]
     metrics["completion length"] = c_length_mean
     metrics["confidence level"] = np.mean(np.array(confidence_levels))
-    metrics["confidence format adherence"] = np.mean(
-        np.array(conf_format_levels))
+    metrics["confidence format adherence"] = np.mean(np.array(conf_format_levels))
 
     print(f"Metrics of {config.name} =")
     for k, v in metrics.items():

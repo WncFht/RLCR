@@ -1,20 +1,26 @@
-from arguments import GRPOScriptArguments,GRPOConfig,ModelConfig
-from trl import TrlParser, get_peft_config
-from transformers import set_seed
 import logging
-import transformers
-import datasets 
-from datasets import load_dataset
+import os
 import sys
-import os 
-from transformers.trainer_utils import get_last_checkpoint
-from reward_fns import format_reward, accuracy_reward, brier_reward, mean_confidence_reward, confidence_one_or_zero
-from system_prompts import get_sys_prompt
-from dataset_processing import process_dataset 
-from GRPO_Trainer import CustomTrainer
-import torch
 from functools import partial
 
+import datasets
+import torch
+import transformers
+from arguments import GRPOConfig, GRPOScriptArguments, ModelConfig
+from dataset_processing import process_dataset
+from datasets import load_dataset
+from GRPO_Trainer import CustomTrainer
+from reward_fns import (
+    accuracy_reward,
+    brier_reward,
+    confidence_one_or_zero,
+    format_reward,
+    mean_confidence_reward,
+)
+from transformers import set_seed
+from transformers.trainer_utils import get_last_checkpoint
+
+from trl import TrlParser
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +47,13 @@ def logger_setup(script_args, training_args, model_args):
     logger.info(f"Script parameters {script_args}")
     logger.info(f"Training parameters {training_args}")
 
+
 def model_init(model_args, training_args):
     logger.info("*** Initializing model kwargs ***")
     torch_dtype = (
-        model_args.torch_dtype if model_args.torch_dtype in ["auto", None] else getattr(torch, model_args.torch_dtype)
+        model_args.torch_dtype
+        if model_args.torch_dtype in ["auto", None]
+        else getattr(torch, model_args.torch_dtype)
     )
     model_kwargs = dict(
         revision=model_args.model_revision,
@@ -55,9 +64,10 @@ def model_init(model_args, training_args):
     )
     return model_kwargs
 
+
 def main(script_args, training_args, model_args):
     set_seed(training_args.seed)
-    logger_setup(script_args, training_args, model_args) 
+    logger_setup(script_args, training_args, model_args)
 
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir):
@@ -67,17 +77,17 @@ def main(script_args, training_args, model_args):
 
     dataset = load_dataset(script_args.dataset_name, name=script_args.dataset_config)
 
-     # Get reward functions
+    # Get reward functions
     REWARD_FUNCS_REGISTRY = {
         "format": partial(format_reward, format_pattern=script_args.format_pattern),
         "accuracy": partial(accuracy_reward, format_pattern=script_args.format_pattern),
         "brier": partial(brier_reward, format_pattern=script_args.format_pattern),
         "mean_confidence": mean_confidence_reward,
-        "confidence_one_or_zero": confidence_one_or_zero
+        "confidence_one_or_zero": confidence_one_or_zero,
     }
     reward_funcs = [REWARD_FUNCS_REGISTRY[func] for func in script_args.reward_funcs]
 
-    dataset = process_dataset(dataset, script_args)  
+    dataset = process_dataset(dataset, script_args)
 
     for split in dataset:
         if "messages" in dataset[split].column_names:
@@ -88,6 +98,8 @@ def main(script_args, training_args, model_args):
 
     if training_args.wandb_project is not None:
         os.environ["WANDB_PROJECT"] = training_args.wandb_project
+    if training_args.wandb_entity is not None:
+        os.environ["WANDB_ENTITY"] = training_args.wandb_entity
 
     train_dataset = dataset[script_args.dataset_train_split]
     eval_dataset = dataset[script_args.dataset_test_split]
@@ -95,7 +107,7 @@ def main(script_args, training_args, model_args):
         train_dataset = train_dataset.select(range(script_args.train_subset_size))
     if script_args.eval_subset_size is not None:
         eval_dataset = eval_dataset.select(range(script_args.eval_subset_size))
-        
+
     #############################
     # Initialize the GRPO trainer
     #############################
@@ -104,9 +116,10 @@ def main(script_args, training_args, model_args):
         reward_funcs=reward_funcs,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset if training_args.eval_strategy != "no" else None)
+        eval_dataset=eval_dataset if training_args.eval_strategy != "no" else None,
+    )
 
-     ###############
+    ###############
     # Training loop
     ###############
     logger.info("*** Train ***")
@@ -146,10 +159,7 @@ def main(script_args, training_args, model_args):
         trainer.model.config.save_pretrained(training_args.output_dir)
 
 
-
 if __name__ == "__main__":
     parser = TrlParser((GRPOScriptArguments, GRPOConfig, ModelConfig))
     script_args, training_args, model_args = parser.parse_args_and_config()
     main(script_args, training_args, model_args)
-
-    

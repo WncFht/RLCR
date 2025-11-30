@@ -1,21 +1,21 @@
-import torch 
-from torch.utils.data import Sampler
-from typing import Optional, Sized
-import torch.nn as nn
 import contextlib
 import functools
 import time
 from collections.abc import Generator
+from typing import Optional, Sized
 
+import torch
+from torch.utils.data import Sampler
 from transformers import Trainer
 from transformers.integrations import is_mlflow_available, is_wandb_available
-
 
 if is_wandb_available():
     import wandb
 
 if is_mlflow_available():
     import mlflow
+
+
 class RepeatSampler(Sampler):
     """
     Sampler that repeats the indices of a dataset in a structured manner.
@@ -91,13 +91,18 @@ class RepeatSampler(Sampler):
     def __iter__(self):
         if self.shuffle:
             # E.g., [2, 4, 3, 1, 0, 6, 5] (num_samples = 7)
-            indexes = torch.randperm(self.num_samples, generator=self.generator).tolist()
+            indexes = torch.randperm(
+                self.num_samples, generator=self.generator
+            ).tolist()
         else:
             indexes = list(range(self.num_samples))
 
         #    [2, 4, 3, 1, 0, 6, 5]
         # -> [[2, 4, 3], [1, 0, 6], [5]]  (batch_size = 3)
-        indexes = [indexes[i : i + self.batch_size] for i in range(0, len(indexes), self.batch_size)]
+        indexes = [
+            indexes[i : i + self.batch_size]
+            for i in range(0, len(indexes), self.batch_size)
+        ]
 
         #    [[2, 4, 3], [1, 0, 6], [5]]
         # -> [[2, 4, 3], [1, 0, 6]]
@@ -112,6 +117,7 @@ class RepeatSampler(Sampler):
     def __len__(self) -> int:
         return self.num_samples * self.mini_repeat_count * self.repeat_count
 
+
 # torch.nanstd doesn't exist, so we define it here
 def nanstd(tensor: torch.Tensor) -> torch.Tensor:
     """
@@ -125,10 +131,13 @@ def nanstd(tensor: torch.Tensor) -> torch.Tensor:
         `torch.Tensor`:
             Standard deviation of the tensor, ignoring NaNs.
     """
-    variance = torch.nanmean((tensor - torch.nanmean(tensor, keepdim=True)) ** 2)  # Compute variance ignoring NaNs
+    variance = torch.nanmean(
+        (tensor - torch.nanmean(tensor, keepdim=True)) ** 2
+    )  # Compute variance ignoring NaNs
     count = torch.sum(~torch.isnan(tensor))  # Count of non-NaN values
     variance *= count / (count - 1)  # Bessel's correction
     return torch.sqrt(variance)
+
 
 def split_tensor_dict(
     tensor_dict: dict[str, Optional[torch.Tensor]], num_chunks: int
@@ -151,13 +160,18 @@ def split_tensor_dict(
     chunk_size = first_tensor.shape[0] // num_chunks
     return [
         {
-            key: tensor[i * chunk_size : (i + 1) * chunk_size] if tensor is not None else None
+            key: tensor[i * chunk_size : (i + 1) * chunk_size]
+            if tensor is not None
+            else None
             for key, tensor in tensor_dict.items()
         }
         for i in range(num_chunks)
     ]
 
-def shuffle_tensor_dict(tensor_dict: dict[str, Optional[torch.Tensor]]) -> dict[str, Optional[torch.Tensor]]:
+
+def shuffle_tensor_dict(
+    tensor_dict: dict[str, Optional[torch.Tensor]],
+) -> dict[str, Optional[torch.Tensor]]:
     """
     Shuffles a dictionary of tensors along the first dimension in unison.
 
@@ -176,7 +190,11 @@ def shuffle_tensor_dict(tensor_dict: dict[str, Optional[torch.Tensor]]) -> dict[
     first_tensor = next(tensor for tensor in tensor_dict.values() if tensor is not None)
     batch_size = first_tensor.shape[0]
     permutation = torch.randperm(batch_size)
-    return {key: tensor[permutation] if tensor is not None else None for key, tensor in tensor_dict.items()}
+    return {
+        key: tensor[permutation] if tensor is not None else None
+        for key, tensor in tensor_dict.items()
+    }
+
 
 def nanmin(tensor: torch.Tensor) -> torch.Tensor:
     """
@@ -207,10 +225,12 @@ def nanmax(tensor: torch.Tensor) -> torch.Tensor:
         return torch.tensor(float("nan"), dtype=tensor.dtype, device=tensor.device)
     return torch.max(tensor[~torch.isnan(tensor)])
 
+
 def disable_dropout_in_model(model: torch.nn.Module) -> None:
     for module in model.modules():
         if isinstance(module, torch.nn.Dropout):
             module.p = 0
+
 
 @contextlib.contextmanager
 def profiling_context(trainer: Trainer, name: str) -> Generator[None, None, None]:
@@ -243,11 +263,21 @@ def profiling_context(trainer: Trainer, name: str) -> Generator[None, None, None
     end_time = time.perf_counter()
     duration = end_time - start_time
 
-    profiling_metrics = {f"profiling/Time taken: {trainer.__class__.__name__}.{name}": duration}
-    if "wandb" in trainer.args.report_to and wandb.run is not None and trainer.accelerator.is_main_process:
+    profiling_metrics = {
+        f"profiling/Time taken: {trainer.__class__.__name__}.{name}": duration
+    }
+    if (
+        "wandb" in trainer.args.report_to
+        and wandb.run is not None
+        and trainer.accelerator.is_main_process
+    ):
         wandb.log(profiling_metrics)
 
-    if "mlflow" in trainer.args.report_to and mlflow.run is not None and trainer.accelerator.is_main_process:
+    if (
+        "mlflow" in trainer.args.report_to
+        and mlflow.run is not None
+        and trainer.accelerator.is_main_process
+    ):
         mlflow.log_metrics(profiling_metrics, step=trainer.state.global_step)
 
 

@@ -19,7 +19,7 @@ TABC_LONG_PROMPT = (
     "The confidence level is a number between 0 and 1 (inclusive) enclosed within <confidence> </confidence> tags. The final answer is enclosed between <answer> </answer> tags."
     "The analysis about confidence and uncertainty is enclosed within <analysis> </analysis> tags. The assistant should reason about its confidence in the solution and its uncertainty in the solution within these tags."
     "Here are some guidelines for the analysis: "
-    "1. Your task is to point out things where the model could be wrong in its thinking, or things where there might be ambiguity in the solution steps, or in the reasoning process itself.\n" 
+    "1. Your task is to point out things where the model could be wrong in its thinking, or things where there might be ambiguity in the solution steps, or in the reasoning process itself.\n"
     "2. You should not suggest ways of fixing the response, your job is only to reason about uncertainties.\n"
     "3. For some questions, the response might be correct. In these cases, It is also okay to have only a small number of uncertainties and then explictly say that I am unable to spot more uncertainties.\n"
     "4. Uncertainties might be different from errors. For example, uncertainties may arise from ambiguities in the question, or from the application of a particular lemma/proof. \n"
@@ -46,6 +46,21 @@ DEEPSEEK_VERIFIER_PROMPT = (
     "6. Enclose this uncertainty analysis within <analysis> </analysis> tags.\n"
 )
 
+INSTRUCT_PROMPT = (
+    "Your task is to solve the below problem posed by the user.\n"
+    "Your response must strictly adhere to the following steps and format requirements:\n"
+    "1. **Thought Process (<think>):** First, provide a detailed reasoning process, steps, and logic for solving the problem inside the `<think>` tags.\n"
+    "2. **Final Answer (<answer>):** Next, provide the final answer to the question inside the `<answer>` tags.\n"
+    "3. **Confidence Analysis (<analysis>):** Then, analyze your level of confidence in the solution and any potential uncertainties inside the `<analysis>` tags.\n"
+    "4. **Confidence Score (<confidence>):** Finally, provide a numerical score between **0 and 1** inside the `<confidence>` tags, representing your confidence level.\n\n"
+    "**Strictly Required Format:**\n"
+    "<think> [Reasoning process / Steps to solve the problem] </think>"
+    "<answer> [Final answer] </answer>"
+    "<analysis> [Analysis of confidence and uncertainty] </analysis>"
+    "<confidence> [Numerical value between 0 and 1] </confidence>"
+    "\nProblem:\n"
+)
+
 
 def get_sys_prompt(sys_prompt_name):
     if sys_prompt_name == "gen":
@@ -58,6 +73,7 @@ def get_sys_prompt(sys_prompt_name):
         return TABC_LONG_PROMPT
     elif sys_prompt_name == "deepseek_verifier":
         return DEEPSEEK_VERIFIER_PROMPT
+    elif sys_prompt_name == "instruct":
+        return INSTRUCT_PROMPT
     else:
         raise ValueError(f"Invalid system prompt name: {sys_prompt_name}")
-    

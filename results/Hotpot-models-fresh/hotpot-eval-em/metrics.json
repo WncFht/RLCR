@@ -1,0 +1,32 @@
+{
+    "Base-qwen2_5-3B-hotpot": {
+        "pass@1": 0.162,
+        "brier_score": 0.7494288000000001,
+        "ece": 0.7743200000000001,
+        "auroc": 0.5315124193405817,
+        "accuracy": 0.162,
+        "completion length": 2301.308,
+        "confidence level": 0.9363200000000002,
+        "confidence format adherence": 1.0
+    },
+    "RLVR-qwen2_5-3B-hotpot": {
+        "pass@1": 0.428,
+        "brier_score": 0.5077,
+        "ece": 0.5074000000000002,
+        "auroc": 0.4677635448663487,
+        "accuracy": 0.428,
+        "completion length": 852.38,
+        "confidence level": 0.9354000000000001,
+        "confidence format adherence": 1.0
+    },
+    "RLCR-qwen2_5-3B-hotpot": {
+        "pass@1": 0.406,
+        "brier_score": 0.187385,
+        "ece": 0.10469999999999997,
+        "auroc": 0.8015126635816291,
+        "accuracy": 0.406,
+        "completion length": 968.934,
+        "confidence level": 0.5106999999999999,
+        "confidence format adherence": 1.0
+    }
+}
