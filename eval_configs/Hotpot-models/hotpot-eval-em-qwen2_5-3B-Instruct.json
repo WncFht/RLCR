@@ -1,0 +1,33 @@
+[ 
+{
+"dataset_name": "mehuldamani/hotpot_qa",
+"hash_key": "problem",
+"store_name": "eval_outputs/Hotpot-models/hotpot-eval-em-qwen2_5-3B-Instruct",
+"gpu_memory_utilization":0.9,
+"log_path": "results/Hotpot-models/hotpot-eval-em-qwen2_5-3B-Instruct"
+},
+{   "name":"Base-qwen2_5-3B-Instruct-hotpot", 
+"model": "Qwen/Qwen2.5-3B-Instruct",
+"check_fn": "confidence_verifier",
+"sys_prompt_name": "instruct_tac",
+"vllm_task": ["confidence_at_end","ans_at_end"],
+"temperature": 0,
+"n":1
+},
+{   "name":"RLVR-qwen2_5-3B-Instruct-hotpot", 
+"model": "/home/fanghaotian-20250830/src/RLCR/data/RLVR-hotpot-Qwen2_5-3B-Instruct/checkpoint-312",
+"check_fn": "confidence_verifier",
+"sys_prompt_name": "instruct_gen",
+"vllm_task": ["confidence_at_end","ans_at_end"],
+"temperature": 0,
+"n":1
+},
+{   "name":"RLCR-qwen2_5-3B-Instruct-hotpot", 
+"model": "/home/fanghaotian-20250830/src/RLCR/data/RLCR-hotpot-Qwen2_5-3B-Instruct/checkpoint-312",
+"check_fn": "confidence_verifier",
+"sys_prompt_name": "instruct_tabc",
+"vllm_task": ["confidence_at_end","ans_at_end"],
+"temperature": 0,
+"n":1
+}
+]

@@ -2,9 +2,9 @@
 {
 "dataset_name": "mehuldamani/hotpot_qa",
 "hash_key": "problem",
-"store_name": "eval_outputs/Hotpot-models-fresh/hotpot-eval-em",
+"store_name": "eval_outputs/Hotpot-models/hotpot-eval-em-qwen2_5-3B",
 "gpu_memory_utilization":0.9,
-"log_path": "results/Hotpot-models-fresh/hotpot-eval-em"
+"log_path": "results/Hotpot-models/hotpot-eval-em-qwen2_5-3B"
 },
 {   "name":"Base-qwen2_5-3B-hotpot", 
 "model": "Qwen/Qwen2.5-3B",

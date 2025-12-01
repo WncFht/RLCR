@@ -3,7 +3,7 @@ from system_prompts import get_sys_prompt
 
 def process_dataset(dataset, script_args):
     sys_prompt = get_sys_prompt(script_args.sys_prompt_name)
-    if script_args.sys_prompt_name == "instruct":
+    if script_args.sys_prompt_name in ["instruct_tabc", "instruct_tac"]:
         dataset = make_instruct_dataset(dataset, sys_prompt)
         return dataset
 

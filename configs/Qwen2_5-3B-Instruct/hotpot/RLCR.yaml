@@ -48,7 +48,7 @@ save_total_limit: 1
 save_only_model: true
 scale_rewards: false
 seed: 43
-sys_prompt_name: "instruct"
+sys_prompt_name: "instruct_tabc"
 temperature: 0.7
 use_vllm: true
 vllm_device: auto

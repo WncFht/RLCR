@@ -46,7 +46,7 @@ DEEPSEEK_VERIFIER_PROMPT = (
     "6. Enclose this uncertainty analysis within <analysis> </analysis> tags.\n"
 )
 
-INSTRUCT_PROMPT = (
+INSTRUCT_TABC_PROMPT = (
     "Your task is to solve the below problem posed by the user.\n"
     "Your response must strictly adhere to the following steps and format requirements:\n"
     "1. **Thought Process (<think>):** First, provide a detailed reasoning process, steps, and logic for solving the problem inside the `<think>` tags.\n"
@@ -58,6 +58,30 @@ INSTRUCT_PROMPT = (
     "<answer> [Final answer] </answer>"
     "<analysis> [Analysis of confidence and uncertainty] </analysis>"
     "<confidence> [Numerical value between 0 and 1] </confidence>"
+    "\nProblem:\n"
+)
+
+INSTRUCT_TAC_PROMPT = (
+    "Your task is to solve the below problem posed by the user.\n"
+    "Your response must strictly adhere to the following steps and format requirements:\n"
+    "1. **Thought Process (<think>):** First, provide a detailed reasoning process, steps, and logic for solving the problem inside the `<think>` tags.\n"
+    "2. **Final Answer (<answer>):** Next, provide the final answer to the question inside the `<answer>` tags.\n"
+    "3. **Confidence Score (<confidence>):** Finally, provide a numerical score between **0 and 1** inside the `<confidence>` tags, representing your confidence level.\n\n"
+    "**Strictly Required Format:**\n"
+    "<think> [Reasoning process / Steps to solve the problem] </think>"
+    "<answer> [Final answer] </answer>"
+    "<confidence> [Numerical value between 0 and 1] </confidence>"
+    "\nProblem:\n"
+)
+
+INSTRUCT_GEN_PROMPT = (
+    "Your task is to solve the below problem posed by the user.\n"
+    "Your response must strictly adhere to the following steps and format requirements:\n"
+    "1. **Thought Process (<think>):** First, provide a detailed reasoning process, steps, and logic for solving the problem inside the `<think>` tags.\n"
+    "2. **Final Answer (<answer>):** Next, provide the final answer to the question inside the `<answer>` tags.\n"
+    "**Strictly Required Format:**\n"
+    "<think> [Reasoning process / Steps to solve the problem] </think>"
+    "<answer> [Final answer] </answer>"
     "\nProblem:\n"
 )
 
@@ -73,7 +97,11 @@ def get_sys_prompt(sys_prompt_name):
         return TABC_LONG_PROMPT
     elif sys_prompt_name == "deepseek_verifier":
         return DEEPSEEK_VERIFIER_PROMPT
-    elif sys_prompt_name == "instruct":
-        return INSTRUCT_PROMPT
+    elif sys_prompt_name == "instruct_tabc":
+        return INSTRUCT_TABC_PROMPT
+    elif sys_prompt_name == "instruct_tac":
+        return INSTRUCT_TAC_PROMPT
+    elif sys_prompt_name == "instruct_gen":
+        return INSTRUCT_GEN_PROMPT
     else:
         raise ValueError(f"Invalid system prompt name: {sys_prompt_name}")
