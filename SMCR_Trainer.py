@@ -496,9 +496,21 @@ class CustomTrainer(Trainer):
                 return idx
         return -1
 
+    def _find_last_subsequence(self, sequence, pattern, end_idx=None):
+        if not pattern:
+            return -1
+        if end_idx is None or end_idx > len(sequence) - len(pattern):
+            end_idx = len(sequence) - len(pattern)
+        for idx in range(end_idx, -1, -1):
+            if sequence[idx : idx + len(pattern)] == pattern:
+                return idx
+        return -1
+
     def _extract_token_spans(self, tokens: list[int]) -> dict[str, Optional[tuple[int, int]]]:
         """
-        Return start/end indices (half-open) for think+answer and analysis+confidence spans.
+        仅依赖最后一个 <answer>...</answer> 来切分：
+        - 之前 (含 think+answer) 归入答案部分；
+        - 之后 (analysis+confidence) 归入置信度部分。
         """
         length = len(tokens)
         spans = {"answer": None, "confidence": None}
@@ -506,51 +518,20 @@ class CustomTrainer(Trainer):
             return spans
 
         tags = self._tag_token_ids
-        think_open = self._find_subsequence(tokens, tags.get("<think>", []))
-        answer_close = self._find_subsequence(tokens, tags.get("</answer>", []))
+        answer_close = self._find_last_subsequence(tokens, tags.get("</answer>", []))
+        if answer_close == -1:
+            return spans
 
-        ans_start = think_open if think_open != -1 else 0
-        ans_end = (
-            answer_close + len(tags.get("</answer>", []))
-            if answer_close != -1
-            else length
+        answer_open = self._find_last_subsequence(
+            tokens, tags.get("<answer>", []), end_idx=answer_close
         )
-        ans_start = max(0, min(ans_start, length))
-        ans_end = max(ans_start, min(ans_end, length))
-        if ans_end > ans_start:
-            spans["answer"] = (ans_start, ans_end)
+        if answer_open == -1 or answer_open > answer_close:
+            return spans
 
-        analysis_open = self._find_subsequence(
-            tokens,
-            tags.get("<analysis>", []),
-            start_idx=ans_end,
-        )
-        confidence_open = self._find_subsequence(
-            tokens,
-            tags.get("<confidence>", []),
-            start_idx=ans_end,
-        )
-        if analysis_open != -1:
-            conf_start = analysis_open
-        else:
-            conf_start = confidence_open
-
-        if conf_start != -1 and conf_start < length:
-            confidence_close = self._find_subsequence(
-                tokens,
-                tags.get("</confidence>", []),
-                start_idx=conf_start,
-            )
-            conf_end = (
-                confidence_close + len(tags.get("</confidence>", []))
-                if confidence_close != -1
-                else length
-            )
-            conf_start = max(0, min(conf_start, length))
-            conf_end = max(conf_start, min(conf_end, length))
-            if conf_end > conf_start:
-                spans["confidence"] = (conf_start, conf_end)
-
+        ans_end = min(length, answer_close + len(tags.get("</answer>", [])))
+        spans["answer"] = (0, ans_end)
+        if ans_end < length:
+            spans["confidence"] = (ans_end, length)
         return spans
 
     def _normalize_group_rewards(self, reward_tensor: torch.Tensor) -> torch.Tensor:
@@ -859,25 +840,26 @@ class CustomTrainer(Trainer):
         ]
 
         # 为每条 completion 准备 think+answer 与 analysis+confidence 的 token mask
-        answer_token_mask = torch.zeros_like(
-            completion_mask, dtype=torch.float32
-        )
-        confidence_token_mask = torch.zeros_like(
-            completion_mask, dtype=torch.float32
+        answer_token_mask = torch.zeros_like(completion_mask, dtype=torch.float32)
+        confidence_token_mask = torch.zeros_like(completion_mask, dtype=torch.float32)
+        valid_answer_split = torch.ones(
+            completion_mask.size(0), dtype=torch.bool, device=completion_mask.device
         )
         for idx, tokens in enumerate(completion_ids_list):
             spans = self._extract_token_spans(tokens)
             seq_len = len(tokens)
-            if spans.get("answer") is not None:
-                start, end = spans["answer"]
-                start = max(0, min(start, seq_len))
-                end = max(start, min(end, seq_len))
-                answer_token_mask[idx, start:end] = 1.0
+            if spans.get("answer") is None:
+                valid_answer_split[idx] = False
+                continue
+            start, end = spans["answer"]
+            start = max(0, min(start, seq_len))
+            end = max(start, min(end, seq_len))
+            answer_token_mask[idx, start:end] = 1.0
             if spans.get("confidence") is not None:
-                start, end = spans["confidence"]
-                start = max(0, min(start, seq_len))
-                end = max(start, min(end, seq_len))
-                confidence_token_mask[idx, start:end] = 1.0
+                c_start, c_end = spans["confidence"]
+                c_start = max(0, min(c_start, seq_len))
+                c_end = max(c_start, min(c_end, seq_len))
+                confidence_token_mask[idx, c_start:c_end] = 1.0
 
         if self.mask_truncated_completions:
             truncated_completions = ~is_eos.any(dim=1)
@@ -1003,22 +985,24 @@ class CustomTrainer(Trainer):
         # Gather the reward per function: this part is crucial, because the rewards are normalized per group and the
         # completions may be distributed across processes
         rewards_per_func = gather(rewards_per_func)
+        valid_answer_split = gather(valid_answer_split)
 
         weight_vector = self.reward_weights.to(rewards_per_func.device)
 
-        def _combine_rewards(indices: list[int]) -> torch.Tensor:
+        def _combine_rewards(indices: list[int], mask: torch.Tensor) -> torch.Tensor:
             if not indices:
-                return torch.zeros(
-                    rewards_per_func.size(0),
-                    device=rewards_per_func.device,
-                    dtype=rewards_per_func.dtype,
-                )
+                return torch.zeros_like(mask, dtype=rewards_per_func.dtype)
             weights = weight_vector[indices].unsqueeze(0)
             selected = rewards_per_func[:, indices]
-            return (selected * weights).sum(dim=1)
+            return (selected * weights).sum(dim=1) * mask.float()
 
-        answer_rewards = _combine_rewards(self.answer_reward_indices)
-        confidence_rewards = _combine_rewards(self.confidence_reward_indices)
+        mask_float = valid_answer_split.to(
+            rewards_per_func.device, dtype=rewards_per_func.dtype
+        )
+        rewards_per_func = rewards_per_func * mask_float.unsqueeze(1)
+
+        answer_rewards = _combine_rewards(self.answer_reward_indices, mask_float)
+        confidence_rewards = _combine_rewards(self.confidence_reward_indices, mask_float)
         total_rewards = answer_rewards + confidence_rewards
 
         accuracy_scores = (

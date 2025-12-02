@@ -72,6 +72,64 @@ def format_reward(format_pattern, completions, **kwargs):
     return matches
 
 
+def _split_completion_by_last_answer(content: str):
+    """
+    将 completion 按照最后一个 <answer>...</answer> 切分，
+    返回 (含 think+answer 的前半部分, 剩余部分)。
+    若无法找到闭合的 answer，则返回 (None, None)。
+    """
+    matches = list(re.finditer(r"<answer>[\s\S]*?</answer>", content, re.DOTALL))
+    if not matches:
+        return None, None
+    last = matches[-1]
+    before = content[: last.end()]
+    after = content[last.end() :]
+    return before, after
+
+
+def format_answer_segment_reward(format_pattern, completions, **kwargs):
+    """只校验 think+answer 片段的格式。"""
+    completion_contents = [completion[0]["content"] for completion in completions]
+    rewards = []
+    answer_regex = re.compile(
+        r".*<think>[\s\S]*?</think>\s*<answer>[\s\S]*?</answer>\s*\Z",
+        re.DOTALL | re.IGNORECASE,
+    )
+    for content in completion_contents:
+        before, _ = _split_completion_by_last_answer(content)
+        if before is None:
+            rewards.append(0.0)
+        else:
+            rewards.append(1.0 if re.match(answer_regex, before) else 0.0)
+    return rewards
+
+
+def format_confidence_segment_reward(format_pattern, completions, **kwargs):
+    """只校验 analysis+confidence（或仅 confidence）片段的格式，并检查数值范围。"""
+    completion_contents = [completion[0]["content"] for completion in completions]
+    rewards = []
+    conf_regex = re.compile(
+        r"\s*(?:<analysis>[\s\S]*?</analysis>\s*)?<confidence>[\s\S]*?</confidence>\s*\Z",
+        re.DOTALL | re.IGNORECASE,
+    )
+    confidence_pattern = re.compile(
+        r"<confidence>(.*?)</confidence>", re.DOTALL | re.IGNORECASE
+    )
+    for content in completion_contents:
+        _, after = _split_completion_by_last_answer(content)
+        if after is None or not re.match(conf_regex, after):
+            rewards.append(0.0)
+            continue
+        matches = confidence_pattern.findall(after)
+        last_conf = matches[-1].strip() if matches else ""
+        try:
+            value = float(last_conf)
+            rewards.append(1.0 if 0.0 <= value <= 1.0 else 0.0)
+        except ValueError:
+            rewards.append(0.0)
+    return rewards
+
+
 def accuracy_reward(format_pattern, completions, answer, source=None, **kwargs):
     """Reward function that extracts the last occurrence of text inside the answer tags and then checks if a label is present there"""
     ans_pattern = r"<answer>(.*?)</answer>"
