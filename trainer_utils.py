@@ -131,11 +131,14 @@ def nanstd(tensor: torch.Tensor) -> torch.Tensor:
         `torch.Tensor`:
             Standard deviation of the tensor, ignoring NaNs.
     """
-    variance = torch.nanmean(
-        (tensor - torch.nanmean(tensor, keepdim=True)) ** 2
-    )  # Compute variance ignoring NaNs
-    count = torch.sum(~torch.isnan(tensor))  # Count of non-NaN values
-    variance *= count / (count - 1)  # Bessel's correction
+    valid_count = torch.sum(~torch.isnan(tensor)).item()
+    if valid_count <= 1:
+        # Not enough valid entries to compute an unbiased estimate.
+        return torch.zeros((), dtype=tensor.dtype, device=tensor.device)
+
+    mean = torch.nanmean(tensor, keepdim=True)
+    variance = torch.nanmean((tensor - mean) ** 2)
+    variance *= valid_count / (valid_count - 1)  # Bessel's correction
     return torch.sqrt(variance)
 
 

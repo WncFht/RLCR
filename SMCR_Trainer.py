@@ -303,6 +303,31 @@ class CustomTrainer(Trainer):
                 reward_processing_classes[i] = reward_processing_class
         self.reward_processing_classes = reward_processing_classes
 
+        # 将奖励函数拆成“答案类/置信度类”，方便后续分别归一化
+        confidence_keywords = ["brier", "confidence"]
+        self.confidence_reward_indices = [
+            i
+            for i, name in enumerate(self.reward_func_names)
+            if any(keyword in name.lower() for keyword in confidence_keywords)
+        ]
+        self.answer_reward_indices = [
+            i
+            for i in range(len(self.reward_func_names))
+            if i not in self.confidence_reward_indices
+        ]
+        self.accuracy_reward_index = next(
+            (
+                i
+                for i, name in enumerate(self.reward_func_names)
+                if "accuracy" in name.lower()
+            ),
+            None,
+        )
+        if self.confidence_reward_indices and self.accuracy_reward_index is None:
+            raise ValueError(
+                "Confidence rewards require 'accuracy_reward' to identify correct samples."
+            )
+
         # Data collator
         def data_collator(features):  # No data collation is needed in GRPO
             return features
@@ -348,6 +373,8 @@ class CustomTrainer(Trainer):
             callbacks=callbacks,
             optimizers=optimizers,
         )
+
+        self._init_tag_token_ids()
 
         # Reference model
         self.beta = args.beta
@@ -439,6 +466,130 @@ class CustomTrainer(Trainer):
                         reward_func, evaluation_mode=True, device_placement=True
                     )
 
+    def _init_tag_token_ids(self):
+        """预先把常用标签编码成 token 序列，后面解析 span 时无需重复分词"""
+        tags = [
+            "<think>",
+            "</think>",
+            "<answer>",
+            "</answer>",
+            "<analysis>",
+            "</analysis>",
+            "<confidence>",
+            "</confidence>",
+        ]
+        self._tag_token_ids = {}
+        tokenizer = getattr(self, "processing_class", None)
+        if tokenizer is None:
+            return
+        for tag in tags:
+            tokenized = tokenizer(tag, add_special_tokens=False)
+            self._tag_token_ids[tag] = tokenized["input_ids"]
+
+    def _find_subsequence(self, sequence, pattern, start_idx=0):
+        if not pattern or start_idx >= len(sequence):
+            return -1
+        pattern_len = len(pattern)
+        limit = len(sequence) - pattern_len + 1
+        for idx in range(start_idx, limit):
+            if sequence[idx : idx + pattern_len] == pattern:
+                return idx
+        return -1
+
+    def _extract_token_spans(self, tokens: list[int]) -> dict[str, Optional[tuple[int, int]]]:
+        """
+        Return start/end indices (half-open) for think+answer and analysis+confidence spans.
+        """
+        length = len(tokens)
+        spans = {"answer": None, "confidence": None}
+        if length == 0 or not getattr(self, "_tag_token_ids", None):
+            return spans
+
+        tags = self._tag_token_ids
+        think_open = self._find_subsequence(tokens, tags.get("<think>", []))
+        answer_close = self._find_subsequence(tokens, tags.get("</answer>", []))
+
+        ans_start = think_open if think_open != -1 else 0
+        ans_end = (
+            answer_close + len(tags.get("</answer>", []))
+            if answer_close != -1
+            else length
+        )
+        ans_start = max(0, min(ans_start, length))
+        ans_end = max(ans_start, min(ans_end, length))
+        if ans_end > ans_start:
+            spans["answer"] = (ans_start, ans_end)
+
+        analysis_open = self._find_subsequence(
+            tokens,
+            tags.get("<analysis>", []),
+            start_idx=ans_end,
+        )
+        confidence_open = self._find_subsequence(
+            tokens,
+            tags.get("<confidence>", []),
+            start_idx=ans_end,
+        )
+        if analysis_open != -1:
+            conf_start = analysis_open
+        else:
+            conf_start = confidence_open
+
+        if conf_start != -1 and conf_start < length:
+            confidence_close = self._find_subsequence(
+                tokens,
+                tags.get("</confidence>", []),
+                start_idx=conf_start,
+            )
+            conf_end = (
+                confidence_close + len(tags.get("</confidence>", []))
+                if confidence_close != -1
+                else length
+            )
+            conf_start = max(0, min(conf_start, length))
+            conf_end = max(conf_start, min(conf_end, length))
+            if conf_end > conf_start:
+                spans["confidence"] = (conf_start, conf_end)
+
+        return spans
+
+    def _normalize_group_rewards(self, reward_tensor: torch.Tensor) -> torch.Tensor:
+        if reward_tensor.numel() == 0:
+            return reward_tensor
+        grouped = reward_tensor.view(-1, self.num_generations)
+        mean = grouped.mean(dim=1)
+        std = grouped.std(dim=1)
+        mean = mean.repeat_interleave(self.num_generations, dim=0)
+        std = std.repeat_interleave(self.num_generations, dim=0)
+        advantages = reward_tensor - mean
+        if self.scale_rewards:
+            advantages = advantages / (std + 1e-4)
+        return advantages
+
+    def _compute_confidence_advantages(
+        self, confidence_rewards: torch.Tensor, accuracy_flags: torch.Tensor
+    ) -> torch.Tensor:
+        if confidence_rewards.numel() == 0:
+            return confidence_rewards
+        grouped_conf = confidence_rewards.view(-1, self.num_generations)
+        grouped_acc = accuracy_flags.view(-1, self.num_generations)
+        adv = torch.zeros_like(grouped_conf)
+        for i in range(grouped_conf.size(0)):
+            conf_row = grouped_conf[i]
+            acc_row = grouped_acc[i]
+            correct_mask = acc_row >= 0.5
+            wrong_mask = ~correct_mask.bool()
+            for mask in (correct_mask, wrong_mask):
+                if mask.sum() == 0:
+                    continue
+                vals = conf_row[mask]
+                mean = vals.mean()
+                std = vals.std(unbiased=False)
+                adv_vals = vals - mean
+                if self.scale_rewards:
+                    adv_vals = adv_vals / (std + 1e-4)
+                adv[i, mask] = adv_vals
+        return adv.view(-1)
     def _set_signature_columns_if_needed(self):
         # If `self.args.remove_unused_columns` is True, non-signature columns are removed.
         # By default, this method sets `self._signature_columns` to the model's expected inputs.
@@ -707,11 +858,36 @@ class CustomTrainer(Trainer):
             for row, mask_row in zip(completion_ids, completion_mask)
         ]
 
+        # 为每条 completion 准备 think+answer 与 analysis+confidence 的 token mask
+        answer_token_mask = torch.zeros_like(
+            completion_mask, dtype=torch.float32
+        )
+        confidence_token_mask = torch.zeros_like(
+            completion_mask, dtype=torch.float32
+        )
+        for idx, tokens in enumerate(completion_ids_list):
+            spans = self._extract_token_spans(tokens)
+            seq_len = len(tokens)
+            if spans.get("answer") is not None:
+                start, end = spans["answer"]
+                start = max(0, min(start, seq_len))
+                end = max(start, min(end, seq_len))
+                answer_token_mask[idx, start:end] = 1.0
+            if spans.get("confidence") is not None:
+                start, end = spans["confidence"]
+                start = max(0, min(start, seq_len))
+                end = max(start, min(end, seq_len))
+                confidence_token_mask[idx, start:end] = 1.0
+
         if self.mask_truncated_completions:
             truncated_completions = ~is_eos.any(dim=1)
             completion_mask = (
                 completion_mask * (~truncated_completions).unsqueeze(1).int()
             )
+
+        # span mask 也需遵从 completion_mask，屏蔽掉 truncation/padding 的 token
+        answer_token_mask = answer_token_mask * completion_mask
+        confidence_token_mask = confidence_token_mask * completion_mask
 
         # Concatenate prompt_mask with completion_mask for logit computation
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
@@ -828,35 +1004,59 @@ class CustomTrainer(Trainer):
         # completions may be distributed across processes
         rewards_per_func = gather(rewards_per_func)
 
-        # Apply weights to each reward function's output and sum
-        rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).sum(
-            dim=1
+        weight_vector = self.reward_weights.to(rewards_per_func.device)
+
+        def _combine_rewards(indices: list[int]) -> torch.Tensor:
+            if not indices:
+                return torch.zeros(
+                    rewards_per_func.size(0),
+                    device=rewards_per_func.device,
+                    dtype=rewards_per_func.dtype,
+                )
+            weights = weight_vector[indices].unsqueeze(0)
+            selected = rewards_per_func[:, indices]
+            return (selected * weights).sum(dim=1)
+
+        answer_rewards = _combine_rewards(self.answer_reward_indices)
+        confidence_rewards = _combine_rewards(self.confidence_reward_indices)
+        total_rewards = answer_rewards + confidence_rewards
+
+        accuracy_scores = (
+            rewards_per_func[:, self.accuracy_reward_index]
+            if self.accuracy_reward_index is not None
+            else torch.zeros_like(answer_rewards)
         )
 
-        # Compute grouped-wise rewards
-        mean_grouped_rewards = rewards.view(-1, self.num_generations).mean(dim=1)
-        std_grouped_rewards = rewards.view(-1, self.num_generations).std(dim=1)
-
-        # Normalize the rewards to compute the advantages
-        mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(
-            self.num_generations, dim=0
+        answer_advantages_full = (
+            self._normalize_group_rewards(answer_rewards)
+            if self.answer_reward_indices
+            else torch.zeros_like(answer_rewards)
         )
-        std_grouped_rewards = std_grouped_rewards.repeat_interleave(
-            self.num_generations, dim=0
+        confidence_advantages_full = (
+            self._compute_confidence_advantages(confidence_rewards, accuracy_scores)
+            if self.confidence_reward_indices
+            else torch.zeros_like(answer_rewards)
         )
-        advantages = rewards - mean_grouped_rewards
-
-        if self.scale_rewards:
-            advantages = advantages / (std_grouped_rewards + 1e-4)
 
         # Slice to keep only the local part of the data
         process_slice = slice(
             self.accelerator.process_index * len(prompts),
             (self.accelerator.process_index + 1) * len(prompts),
         )
-        advantages = advantages[process_slice]
+        answer_advantages = answer_advantages_full[process_slice]
+        confidence_advantages = confidence_advantages_full[process_slice]
+        answer_token_mask = answer_token_mask[process_slice]
+        confidence_token_mask = confidence_token_mask[process_slice]
+
+        token_advantages = (
+            answer_advantages.unsqueeze(1) * answer_token_mask
+            + confidence_advantages.unsqueeze(1) * confidence_token_mask
+        )
+        advantages = token_advantages
 
         # Log the metrics
+        mean_grouped_rewards = total_rewards.view(-1, self.num_generations).mean(dim=1)
+        std_grouped_rewards = total_rewards.view(-1, self.num_generations).std(dim=1)
         if mode == "train":
             self.state.num_input_tokens_seen += (
                 self.accelerator.gather_for_metrics(attention_mask.sum()).sum().item()
@@ -907,6 +1107,18 @@ class CustomTrainer(Trainer):
             self._metrics[mode][f"rewards/{reward_func_name}/std"].append(std_rewards)
         self._metrics[mode]["reward"].append(mean_grouped_rewards.mean().item())
         self._metrics[mode]["reward_std"].append(std_grouped_rewards.mean().item())
+        if self.answer_reward_indices:
+            answer_group_mean = answer_rewards.view(-1, self.num_generations).mean(dim=1)
+            self._metrics[mode]["reward/answer"].append(
+                answer_group_mean.mean().item()
+            )
+        if self.confidence_reward_indices:
+            confidence_group_mean = confidence_rewards.view(
+                -1, self.num_generations
+            ).mean(dim=1)
+            self._metrics[mode]["reward/confidence"].append(
+                confidence_group_mean.mean().item()
+            )
 
         # Log prompt and completion texts
         num_completions_to_log = self.args.num_completions_to_log
@@ -994,14 +1206,12 @@ class CustomTrainer(Trainer):
 
         if self.args.delta is not None:
             # Use clamp instead of min to handle tensor-float comparison
-            per_token_loss1 = torch.clamp(
-                coef_1, max=self.args.delta
-            ) * advantages.unsqueeze(1)
+            per_token_loss1 = torch.clamp(coef_1, max=self.args.delta) * advantages
         else:
             # Original GRPO clipping (only lower bound implicitly applied by the final min)
-            per_token_loss1 = coef_1 * advantages.unsqueeze(1)
+            per_token_loss1 = coef_1 * advantages
 
-        per_token_loss2 = coef_2 * advantages.unsqueeze(1)
+        per_token_loss2 = coef_2 * advantages
         per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
 
         if self.beta != 0.0:
@@ -1030,10 +1240,8 @@ class CustomTrainer(Trainer):
             )
 
         # Compute the clipped probability ratios
-        is_low_clipped = (coef_1 < 1 - self.epsilon_low) & (advantages.unsqueeze(1) < 0)
-        is_high_clipped = (coef_1 > 1 + self.epsilon_high) & (
-            advantages.unsqueeze(1) > 0
-        )
+        is_low_clipped = (coef_1 < 1 - self.epsilon_low) & (advantages < 0)
+        is_high_clipped = (coef_1 > 1 + self.epsilon_high) & (advantages > 0)
         is_region_clipped = is_low_clipped | is_high_clipped
 
         low_clip = (is_low_clipped * completion_mask).sum() / completion_mask.sum()
