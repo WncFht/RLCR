@@ -72,6 +72,13 @@ class GRPOScriptArguments(ScriptArguments):
         metadata={"help": "The format pattern to use for the reward function."},
     )
 
+    use_mo_grpo_advantage: bool = field(
+        default=False,
+        metadata={
+            "help": "Use MO-GRPO style advantage calculation that normalizes each reward channel before combining."
+        },
+    )
+
 
 @dataclass
 class GRPOConfig(trl.GRPOConfig):

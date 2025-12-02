@@ -319,6 +319,7 @@ class CustomTrainer(Trainer):
         self.vllm_tensor_parallel_size = args.vllm_tensor_parallel_size
         self.loss_type = args.loss_type
         self.scale_rewards = args.scale_rewards
+        self.use_mo_grpo_advantage = getattr(args, "use_mo_grpo_advantage", False)
         self.mask_truncated_completions = args.mask_truncated_completions
         self.vllm_sleeping = False
 
@@ -828,26 +829,51 @@ class CustomTrainer(Trainer):
         # completions may be distributed across processes
         rewards_per_func = gather(rewards_per_func)
 
+        reward_weights = self.reward_weights.to(rewards_per_func.device)
+
         # Apply weights to each reward function's output and sum
-        rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).sum(
-            dim=1
-        )
+        rewards = (rewards_per_func * reward_weights.unsqueeze(0)).sum(dim=1)
 
         # Compute grouped-wise rewards
-        mean_grouped_rewards = rewards.view(-1, self.num_generations).mean(dim=1)
-        std_grouped_rewards = rewards.view(-1, self.num_generations).std(dim=1)
+        grouped_rewards = rewards.view(-1, self.num_generations)
+        mean_grouped_rewards_per_prompt = grouped_rewards.mean(dim=1)
+        std_grouped_rewards_per_prompt = grouped_rewards.std(dim=1)
 
         # Normalize the rewards to compute the advantages
-        mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(
+        expanded_mean_grouped_rewards = mean_grouped_rewards_per_prompt.repeat_interleave(
             self.num_generations, dim=0
         )
-        std_grouped_rewards = std_grouped_rewards.repeat_interleave(
+        expanded_std_grouped_rewards = std_grouped_rewards_per_prompt.repeat_interleave(
             self.num_generations, dim=0
         )
-        advantages = rewards - mean_grouped_rewards
 
+        # 计算标准 GRPO 优势：先合成单标量 reward，再做组内 baseline/标准化
+        standard_advantages = rewards - expanded_mean_grouped_rewards
         if self.scale_rewards:
-            advantages = advantages / (std_grouped_rewards + 1e-4)
+            standard_advantages = standard_advantages / (
+                expanded_std_grouped_rewards + 1e-4
+            )
+
+        if self.use_mo_grpo_advantage:
+            # MO-GRPO：每个 reward 通道各自做组内去均值/标准化，再用 reward_weights 加权
+            num_reward_channels = rewards_per_func.size(1)
+            reward_groups = rewards_per_func.view(
+                -1, self.num_generations, num_reward_channels
+            )
+            centered_rewards = reward_groups - reward_groups.mean(
+                dim=1, keepdim=True
+            )
+            if self.scale_rewards:
+                std_rewards = reward_groups.std(dim=1, keepdim=True)
+                centered_rewards = centered_rewards / (std_rewards + 1e-4)
+            weighted_advantages = (
+                centered_rewards * reward_weights.view(1, 1, -1)
+            ).sum(dim=2)
+            mo_advantages = weighted_advantages.reshape(-1)
+            advantages = mo_advantages
+        else:
+            mo_advantages = None
+            advantages = standard_advantages
 
         # Slice to keep only the local part of the data
         process_slice = slice(
@@ -855,6 +881,23 @@ class CustomTrainer(Trainer):
             (self.accelerator.process_index + 1) * len(prompts),
         )
         advantages = advantages[process_slice]
+
+        # 记录优势统计，方便对比开启/关闭 MO-GRPO 后的数值范围
+        flat_standard_adv = standard_advantages.view(-1)
+        self._metrics[mode]["advantages/standard_mean"].append(
+            flat_standard_adv.mean().item()
+        )
+        self._metrics[mode]["advantages/standard_std"].append(
+            flat_standard_adv.std(unbiased=False).item()
+        )
+        if mo_advantages is not None:
+            flat_mo_adv = mo_advantages.view(-1)
+            self._metrics[mode]["advantages/mo_mean"].append(
+                flat_mo_adv.mean().item()
+            )
+            self._metrics[mode]["advantages/mo_std"].append(
+                flat_mo_adv.std(unbiased=False).item()
+            )
 
         # Log the metrics
         if mode == "train":
@@ -905,8 +948,12 @@ class CustomTrainer(Trainer):
             self._metrics[mode][f"rewards/{reward_func_name}"].append(mean_rewards)
             std_rewards = nanstd(reward_values).item()
             self._metrics[mode][f"rewards/{reward_func_name}/std"].append(std_rewards)
-        self._metrics[mode]["reward"].append(mean_grouped_rewards.mean().item())
-        self._metrics[mode]["reward_std"].append(std_grouped_rewards.mean().item())
+        self._metrics[mode]["reward"].append(
+            mean_grouped_rewards_per_prompt.mean().item()
+        )
+        self._metrics[mode]["reward_std"].append(
+            std_grouped_rewards_per_prompt.mean().item()
+        )
 
         # Log prompt and completion texts
         num_completions_to_log = self.args.num_completions_to_log
