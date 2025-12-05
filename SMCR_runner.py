@@ -93,13 +93,11 @@ def main(script_args, training_args, model_args):
         "mean_confidence": mean_confidence_reward,
         "confidence_one_or_zero": confidence_one_or_zero,
     }
-    # 若传入 reward_weights，需要在展开 format 奖励时同步拆分
+    # 记录原始 reward weight，避免后面 zip 时越界
     if training_args.reward_weights is not None:
         original_weights = list(training_args.reward_weights)
         if len(original_weights) != len(script_args.reward_funcs):
-            raise ValueError(
-                "长度不匹配: reward_weights 与 reward_funcs 必须对齐"
-            )
+            raise ValueError("长度不匹配: reward_weights 与 reward_funcs 必须对齐")
     else:
         original_weights = None
 
@@ -107,26 +105,9 @@ def main(script_args, training_args, model_args):
     expanded_weights = [] if original_weights is not None else None
     for idx, func in enumerate(script_args.reward_funcs):
         weight = original_weights[idx] if original_weights is not None else None
-        if func == "format":
-            reward_funcs.append(
-                partial(
-                    format_answer_segment_reward,
-                    format_pattern=script_args.format_pattern,
-                )
-            )
-            reward_funcs.append(
-                partial(
-                    format_confidence_segment_reward,
-                    format_pattern=script_args.format_pattern,
-                )
-            )
-            if expanded_weights is not None:
-                half = weight / 2 if weight is not None else 0.0
-                expanded_weights.extend([half, half])
-        else:
-            reward_funcs.append(REWARD_FUNCS_REGISTRY[func])
-            if expanded_weights is not None:
-                expanded_weights.append(weight)
+        reward_funcs.append(REWARD_FUNCS_REGISTRY[func])
+        if expanded_weights is not None:
+            expanded_weights.append(weight)
 
     if expanded_weights is not None:
         training_args.reward_weights = expanded_weights

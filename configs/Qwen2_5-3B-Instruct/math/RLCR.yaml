@@ -46,6 +46,7 @@ reward_weights: [0.5,0.5,0.5,0.00001,0.00001]
 save_strategy: "steps"
 save_steps: 60
 save_total_limit: 1
+save_only_model: true
 scale_rewards : false 
 seed: 43
 sys_prompt_name: "instruct_tabc"

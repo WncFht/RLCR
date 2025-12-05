@@ -253,9 +253,46 @@ def confidence_one_or_zero(completions, answer, **kwargs):
 
 
 if __name__ == "__main__":
-    s = "    h   ello whatever </think> <answer> The number of non-empty subsets 31 </answer> <confidence> 0.9 </confidence>   \n \n  "
+    # s = "    h   ello whatever </think> <answer> The number of non-empty subsets 31 </answer> <confidence> 0.9 </confidence>   \n \n  "
 
-    pattern = r".*?</think>\s*<answer>.*?</answer>\s*<confidence>.*?</confidence>\s*\Z"
-    match = re.match(pattern, s, re.DOTALL | re.MULTILINE)
-    print(match)
-    print(match[0])
+    # pattern = r".*?</think>\s*<answer>.*?</answer>\s*<confidence>.*?</confidence>\s*\Z"
+    # match = re.match(pattern, s, re.DOTALL | re.MULTILINE)
+    # print(match)
+    # print(match[0])
+    test_1 = "<answer>Greenwich University</answer><analysis> <think>First, we need to identify the town where Anthony Armstrong Jones was born. From the information provided, we see that Anthony Armstrong Jones is a son of Sir Andrew Carnwath and has a similar surname to the person in the Greenwich Foundation paragraph. The paragraph mentions that Francis Armstrong Carnwath was born on May 26, 1940, and he was the Director of the Greenwich Foundation from 1997 to 2002. This suggests that Anthony Armstrong Jones is likely Francis Armstrong Carnwath, as he is the only Anthony Armstrong Jones mentioned in the given information. The Greenwich Foundation is based in Greenwich, London, so we can conclude that Anthony Armstrong Jones, or Francis Armstrong Carnwath, was born in a town near Greenwich. Given the options, the University based in Greenwich is Greenwich University. </think> <answer>Greenwich University</answer> <analysis>My confidence in this solution is moderate. While the reasoning is logical and based on the given information, there could be other possible individuals with the same surname who are not mentioned in the text. Additionally, the exact name of the town where Anthony Armstrong Jones was born is not provided, but we can reasonably infer it is near Greenwich. </analysis> <confidence>0.3</confidence>"
+    test_2 = "<answer>Antonio Machín</answer><analysis> <think> The question asks about a Cuban artist that Caliente featured and received the National Medal of Arts in 1994. From the information provided, Antonio Machín is a Cuban singer and musician who was born in 1903 in Sagua la Grande, Cuba. While he is not primarily known as a visual artist, the question specifically mentions Caliente featured an artist that received the National Medal of Arts in 1994. Antonio Machín did not receive the National Medal of Arts. The Cuban artist that received the National Medal of Arts in 1994 is Juan Francisco Elso, as mentioned in Paragraph 0. </think> <answer>Antonio Machín</answer> <analysis> My confidence in the answer is low because Antonio Machín is not the artist who received the National Medal of Arts in 1994, as mentioned in the supporting information. However, given the structure of the question and the constraints, the answer <answer>Antonio Machín</answer> is the closest match to the provided options. </analysis> <confidence>0.1</confidence>"
+    test_3 = "<answer>Caliente featured Juan Francisco Elso, who received the National Medal of Arts in 1994.</answer><analysis> <think> The question asks for the Cuban artist that Caliente featured, who also received the National Medal of Arts in 1994. From the given paragraphs, Juan Francisco Elso is identified as a Cuban artist born in Havana, Cuba with a variety of art media. The National Medal of Arts was awarded to him in 1994. Caliente is a reggaeton group that released an album in 1994 featuring Juan Francisco Elso as one of the artists. </think> <answer>Caliente featured Juan Francisco Elso, who received the National Medal of Arts in 1994.</answer> <analysis> My confidence in this answer is high because the information is directly stated in the supporting paragraphs. The identification of Juan Francisco Elso as a Cuban artist and the National Medal of Arts recipient is clear and unambiguous, making the answer straightforward. </analysis> <confidence>0.9</confidence>"
+    test_4 = "<think>  h   ello whatever </think> <answer> The number of non-empty subsets 31 </answer> <confidence> 0.9 </confidence>   \n \n  "
+    test_5 = """<think>
+From the given information:
+- Annie Dillard is described as an "American author" in Paragraph 0 of the provided text.
+- Josephine Tey is described as "a Scottish author" in Paragraph 2. Additionally, Paragraph 2 mentions that she used a pseudonym "Josephine Tey" when she was actually "Elizabeth MacKintosh," indicating she was British.
+From this, we can conclude that Annie Dillard is American, but Josephine Tey is not American. Therefore, they are not both American authors.
+</think>
+<answer>No</answer>
+<analysis>
+My confidence in the solution is very high because the information provided directly states Annie Dillard's nationality as American and Josephine Tey's nationality as British. There is no ambiguity in the given information, so the answer is clear and straightforward.
+</analysis>
+<confidence>1.0</confidence>"""
+
+    completions = [
+        [{"content": test_1}],
+        [{"content": test_2}],
+        [{"content": test_3}],
+        [{"content": test_4}],
+        [{"content": test_5}],
+    ]
+    answers = [
+        "Greenwich University",
+        "Antonio Machín",
+        "Caliente featured Juan Francisco Elso, who received the National Medal of Arts in 1994.",
+    ]
+
+    # test format_reward, format_confidence_segment_reward, format_answer_segment_reward
+    print("Format reward test:")
+    fr = format_reward("tabc", completions)
+    print(fr)
+    facsr = format_answer_segment_reward("ta", completions)
+    print(facsr)
+    fccsr = format_confidence_segment_reward("ac", completions)
+    print(fccsr)
