@@ -304,7 +304,7 @@ class CustomTrainer(Trainer):
         self.reward_processing_classes = reward_processing_classes
 
         # 将奖励函数拆成“答案类/置信度类”，方便后续分别归一化
-        confidence_keywords = ["brier", "confidence"]
+        confidence_keywords = ["brier", "confidence", "log_likelihood"]
         format_keywords = ["format"]
         self.confidence_reward_indices = []
         self.format_reward_indices = []

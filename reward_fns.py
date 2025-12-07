@@ -1,3 +1,4 @@
+import math
 import re
 import string
 
@@ -192,6 +193,51 @@ def brier_reward(format_pattern, completions, answer, source=None, **kwargs):
                         "Something might be wrong",
                     )
                     matches.append(0)
+    return matches
+
+
+def log_likelihood_reward(format_pattern, completions, answer, source=None, **kwargs):
+    """Reward based on the log-likelihood of the correctness label given the reported confidence."""
+    confidence_pattern = r"<confidence>(.*?)</confidence>"
+    completion_contents = [completion[0]["content"] for completion in completions]
+    matches = []
+    correctness_rewards = accuracy_reward(format_pattern, completions, answer, source)
+    format_rewards = format_reward(format_pattern, completions)
+    eps = 1e-6
+    min_reward = math.log(eps) - 1.0
+
+    for content, cr, fr in zip(
+        completion_contents, correctness_rewards, format_rewards
+    ):
+        # 若格式不合法，直接给“最差”的 log-likelihood，避免 0 比合法样本更大
+        if fr == 0:
+            matches.append(min_reward)
+            continue
+
+        confidence_matches = re.findall(
+            confidence_pattern, content, re.DOTALL | re.MULTILINE
+        )
+        last_confidence = confidence_matches[-1] if confidence_matches else ""
+        if last_confidence == "":
+            matches.append(min_reward)
+            continue
+
+        try:
+            conf = float(last_confidence)
+            # clip confidence to avoid log(0)
+            conf = max(eps, min(conf, 1.0 - eps))
+            if cr >= 0.5:
+                reward = math.log(conf)
+            else:
+                reward = math.log(1.0 - conf)
+            matches.append(float(reward))
+        except Exception:
+            print(
+                "Could not parse confidence for log_likelihood_reward: ",
+                last_confidence,
+                "Something might be wrong",
+            )
+            matches.append(min_reward)
     return matches
 
 

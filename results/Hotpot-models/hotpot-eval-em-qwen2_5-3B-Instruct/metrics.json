@@ -1,4 +1,5 @@
 {
+{
     "Base-qwen2_5-3B-Instruct-hotpot": {
         "pass@1": 0.302,
         "brier_score": 0.5117301999999999,
@@ -28,5 +29,17 @@
         "completion length": 1244.07,
         "confidence level": 0.48319999999999996,
         "confidence format adherence": 1.0
+    },
+    {
+        "SMCR-qwen2_5-3B-Instruct-hotpot": {
+        "pass@1": 0.412,
+        "brier_score": 0.18102500000000002,
+        "ece": 0.08490000000000004,
+        "auroc": 0.8094329964995708,
+        "accuracy": 0.412,
+        "completion length": 1536.434,
+        "confidence level": 0.49210000000000004,
+        "confidence format adherence": 1.0
     }
+}
 }

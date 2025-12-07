@@ -16,6 +16,7 @@ from reward_fns import (
     format_answer_segment_reward,
     format_confidence_segment_reward,
     format_reward,
+    log_likelihood_reward,
     mean_confidence_reward,
 )
 from SMCR_Trainer import CustomTrainer
@@ -90,6 +91,9 @@ def main(script_args, training_args, model_args):
         ),
         "accuracy": partial(accuracy_reward, format_pattern=script_args.format_pattern),
         "brier": partial(brier_reward, format_pattern=script_args.format_pattern),
+        "log_likelihood": partial(
+            log_likelihood_reward, format_pattern=script_args.format_pattern
+        ),
         "mean_confidence": mean_confidence_reward,
         "confidence_one_or_zero": confidence_one_or_zero,
     }
