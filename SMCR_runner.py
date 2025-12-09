@@ -71,6 +71,9 @@ def model_init(model_args, training_args):
 def main(script_args, training_args, model_args):
     set_seed(training_args.seed)
     logger_setup(script_args, training_args, model_args)
+    training_args.group_confidence_by_accuracy = (
+        script_args.group_confidence_by_accuracy
+    )
 
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir):

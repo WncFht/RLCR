@@ -42,6 +42,7 @@ report_to:
 - wandb
 reward_funcs: ["format","accuracy","brier","mean_confidence","confidence_one_or_zero"]
 reward_weights: [0.5,0.5,2.5,0.000001,0.000001]
+group_confidence_by_accuracy: true
 save_strategy: "steps"
 save_steps: 60
 save_total_limit: 1

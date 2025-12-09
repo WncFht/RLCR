@@ -299,10 +299,13 @@ class CustomTrainer(Trainer):
                     )
                 # The reward model computes the reward for the latest non-padded token in the input sequence.
                 # So it's important to set the pad token ID to the padding token ID of the processing class.
-                reward_func.config.pad_token_id = reward_processing_class.pad_token_id
+                    reward_func.config.pad_token_id = reward_processing_class.pad_token_id
                 reward_processing_classes[i] = reward_processing_class
         self.reward_processing_classes = reward_processing_classes
 
+        self.group_confidence_by_accuracy = getattr(
+            args, "group_confidence_by_accuracy", True
+        )
         # 将奖励函数拆成“答案类/置信度类”，方便后续分别归一化
         confidence_keywords = ["brier", "confidence", "log_likelihood"]
         format_keywords = ["format"]
@@ -328,7 +331,11 @@ class CustomTrainer(Trainer):
             ),
             None,
         )
-        if self.confidence_reward_indices and self.accuracy_reward_index is None:
+        if (
+            self.group_confidence_by_accuracy
+            and self.confidence_reward_indices
+            and self.accuracy_reward_index is None
+        ):
             raise ValueError(
                 "Confidence rewards require 'accuracy_reward' to identify correct samples."
             )
@@ -567,6 +574,13 @@ class CustomTrainer(Trainer):
         if confidence_rewards.numel() == 0:
             return confidence_rewards
         grouped_conf = confidence_rewards.view(-1, self.num_generations)
+        if not self.group_confidence_by_accuracy:
+            mean = grouped_conf.mean(dim=1, keepdim=True)
+            std = grouped_conf.std(dim=1, unbiased=False, keepdim=True)
+            adv = grouped_conf - mean
+            if self.scale_rewards:
+                adv = adv / (std + 1e-4)
+            return adv.view(-1)
         grouped_acc = accuracy_flags.view(-1, self.num_generations)
         adv = torch.zeros_like(grouped_conf)
         for i in range(grouped_conf.size(0)):
@@ -1039,30 +1053,35 @@ class CustomTrainer(Trainer):
             else torch.zeros_like(mask_float)
         )
 
-        grouped_acc = accuracy_scores.view(-1, self.num_generations)
-        grouped_valid = mask_float.view(-1, self.num_generations).bool()
-        valid_counts = grouped_valid.sum(dim=1)
-        has_valid = valid_counts > 0
-        correct_counts = (
-            ((grouped_acc >= 0.5) & grouped_valid).sum(dim=1).float()
-        )
-        wrong_counts = (
-            ((grouped_acc < 0.5) & grouped_valid).sum(dim=1).float()
-        )
-        correct_ratio = torch.full(
-            (grouped_acc.size(0),), float("nan"), device=mask_float.device
-        )
-        wrong_ratio = torch.full_like(correct_ratio, float("nan"))
-        if has_valid.any():
-            denom = valid_counts[has_valid].float()
-            correct_ratio[has_valid] = correct_counts[has_valid] / denom.clamp(min=1.0)
-            wrong_ratio[has_valid] = wrong_counts[has_valid] / denom.clamp(min=1.0)
-            self._metrics[mode]["confidence/correct_group_ratio"].append(
-                torch.nanmean(correct_ratio).item()
+        if self.group_confidence_by_accuracy and self.accuracy_reward_index is not None:
+            grouped_acc = accuracy_scores.view(-1, self.num_generations)
+            grouped_valid = mask_float.view(-1, self.num_generations).bool()
+            valid_counts = grouped_valid.sum(dim=1)
+            has_valid = valid_counts > 0
+            correct_counts = (
+                ((grouped_acc >= 0.5) & grouped_valid).sum(dim=1).float()
             )
-            self._metrics[mode]["confidence/wrong_group_ratio"].append(
-                torch.nanmean(wrong_ratio).item()
+            wrong_counts = (
+                ((grouped_acc < 0.5) & grouped_valid).sum(dim=1).float()
             )
+            correct_ratio = torch.full(
+                (grouped_acc.size(0),), float("nan"), device=mask_float.device
+            )
+            wrong_ratio = torch.full_like(correct_ratio, float("nan"))
+            if has_valid.any():
+                denom = valid_counts[has_valid].float()
+                correct_ratio[has_valid] = correct_counts[has_valid] / denom.clamp(
+                    min=1.0
+                )
+                wrong_ratio[has_valid] = wrong_counts[has_valid] / denom.clamp(
+                    min=1.0
+                )
+                self._metrics[mode]["confidence/correct_group_ratio"].append(
+                    torch.nanmean(correct_ratio).item()
+                )
+                self._metrics[mode]["confidence/wrong_group_ratio"].append(
+                    torch.nanmean(wrong_ratio).item()
+                )
 
         answer_advantages_full = (
             self._normalize_group_rewards(answer_rewards)

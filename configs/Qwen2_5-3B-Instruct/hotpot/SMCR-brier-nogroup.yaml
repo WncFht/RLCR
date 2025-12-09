@@ -1,7 +1,7 @@
 # Model arguments
 model_name_or_path: Qwen/Qwen2.5-3B-Instruct
-run_name: "SMCR-hotpot-Qwen2.5-3B-Instruct-log"
-output_dir: data/SMCR-hotpot-Qwen2_5-3B-Instruct-log
+run_name: "SMCR-hotpot-Qwen2.5-3B-Instruct-brier-nogroup"
+output_dir: data/SMCR-hotpot-Qwen2_5-3B-Instruct-brier-nogroup
 model_revision: main
 torch_dtype: bfloat16
 attn_implementation: flash_attention_2
@@ -40,9 +40,9 @@ per_device_train_batch_size: 8
 push_to_hub: false
 report_to:
 - wandb
-reward_funcs: ["format","accuracy","log_likelihood","brier","mean_confidence","confidence_one_or_zero"]
-reward_weights: [0.5,0.5,2.5,0.000001,0.000001,0.000001]
-group_confidence_by_accuracy: true
+reward_funcs: ["format","accuracy","brier"]
+reward_weights: [0.5,0.5,2.5]
+group_confidence_by_accuracy: false
 save_strategy: "steps"
 save_steps: 60
 save_total_limit: 1

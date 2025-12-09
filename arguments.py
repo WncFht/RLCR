@@ -72,6 +72,14 @@ class GRPOScriptArguments(ScriptArguments):
         metadata={"help": "The format pattern to use for the reward function."},
     )
 
+    group_confidence_by_accuracy: bool = field(
+        default=True,
+        metadata={
+            "help": "If True, compute confidence reward baselines separately for correct and incorrect generations; "
+            "if False, compute a single baseline over all confidence rewards."
+        },
+    )
+
     use_mo_grpo_advantage: bool = field(
         default=False,
         metadata={
