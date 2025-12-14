@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=1,2,3,4
+export CUDA_VISIBLE_DEVICES=2,4,6,7
 export WANDB_ENTITY=rl_confidence
 mkdir -p log
 nohup accelerate launch --num_processes 4 --config_file deepspeed.yaml SMCR_runner.py \

@@ -40,8 +40,8 @@ per_device_train_batch_size: 8
 push_to_hub: false
 report_to:
 - wandb
-reward_funcs: ["format","accuracy","brier"]
-reward_weights: [0.5,0.5,2.5]
+reward_funcs: ["format","accuracy","brier","log_likelihood","mean_confidence","confidence_one_or_zero"]
+reward_weights: [0.5,0.5,2.5,0.000001,0.000001,0.000001]
 group_confidence_by_accuracy: false
 save_strategy: "steps"
 save_steps: 60
