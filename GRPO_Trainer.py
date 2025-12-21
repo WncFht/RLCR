@@ -494,7 +494,7 @@ class CustomTrainer(Trainer):
         # See _get_train_sampler for an explanation of the sampler.
         return RepeatSampler(
             data_source=eval_dataset,
-            mini_repeat_count=1,
+            mini_repeat_count=self.num_generations,
             seed=self.args.seed,
         )
 
