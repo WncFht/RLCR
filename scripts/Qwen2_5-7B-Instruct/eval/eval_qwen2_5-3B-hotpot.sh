@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0 python evaluation.py --config eval_configs/Hotpot-models/hotpot-eval-em-qwen2_5-3B.json

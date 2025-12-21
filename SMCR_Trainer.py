@@ -297,9 +297,11 @@ class CustomTrainer(Trainer):
                     reward_processing_class.pad_token = (
                         reward_processing_class.eos_token
                     )
-                # The reward model computes the reward for the latest non-padded token in the input sequence.
-                # So it's important to set the pad token ID to the padding token ID of the processing class.
-                    reward_func.config.pad_token_id = reward_processing_class.pad_token_id
+                    # The reward model computes the reward for the latest non-padded token in the input sequence.
+                    # So it's important to set the pad token ID to the padding token ID of the processing class.
+                    reward_func.config.pad_token_id = (
+                        reward_processing_class.pad_token_id
+                    )
                 reward_processing_classes[i] = reward_processing_class
         self.reward_processing_classes = reward_processing_classes
 
@@ -546,9 +548,9 @@ class CustomTrainer(Trainer):
 
         # 将字符位置映射回 token 索引：重新编码前缀即可得到 token 数
         prefix_text = decoded[: answer_close_char + len(close_str)]
-        prefix_tokens = self.processing_class(
-            prefix_text, add_special_tokens=False
-        )["input_ids"]
+        prefix_tokens = self.processing_class(prefix_text, add_special_tokens=False)[
+            "input_ids"
+        ]
         ans_end = min(len(tokens), len(prefix_tokens))
         spans["answer"] = (0, ans_end)
         if ans_end < len(tokens):
@@ -654,7 +656,7 @@ class CustomTrainer(Trainer):
         # See _get_train_sampler for an explanation of the sampler.
         return RepeatSampler(
             data_source=eval_dataset,
-            mini_repeat_count=1,
+            mini_repeat_count=self.num_generations,
             seed=self.args.seed,
         )
 
@@ -1058,12 +1060,8 @@ class CustomTrainer(Trainer):
             grouped_valid = mask_float.view(-1, self.num_generations).bool()
             valid_counts = grouped_valid.sum(dim=1)
             has_valid = valid_counts > 0
-            correct_counts = (
-                ((grouped_acc >= 0.5) & grouped_valid).sum(dim=1).float()
-            )
-            wrong_counts = (
-                ((grouped_acc < 0.5) & grouped_valid).sum(dim=1).float()
-            )
+            correct_counts = ((grouped_acc >= 0.5) & grouped_valid).sum(dim=1).float()
+            wrong_counts = ((grouped_acc < 0.5) & grouped_valid).sum(dim=1).float()
             correct_ratio = torch.full(
                 (grouped_acc.size(0),), float("nan"), device=mask_float.device
             )
@@ -1073,9 +1071,7 @@ class CustomTrainer(Trainer):
                 correct_ratio[has_valid] = correct_counts[has_valid] / denom.clamp(
                     min=1.0
                 )
-                wrong_ratio[has_valid] = wrong_counts[has_valid] / denom.clamp(
-                    min=1.0
-                )
+                wrong_ratio[has_valid] = wrong_counts[has_valid] / denom.clamp(min=1.0)
                 self._metrics[mode]["confidence/correct_group_ratio"].append(
                     torch.nanmean(correct_ratio).item()
                 )

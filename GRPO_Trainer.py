@@ -840,8 +840,10 @@ class CustomTrainer(Trainer):
         std_grouped_rewards_per_prompt = grouped_rewards.std(dim=1)
 
         # Normalize the rewards to compute the advantages
-        expanded_mean_grouped_rewards = mean_grouped_rewards_per_prompt.repeat_interleave(
-            self.num_generations, dim=0
+        expanded_mean_grouped_rewards = (
+            mean_grouped_rewards_per_prompt.repeat_interleave(
+                self.num_generations, dim=0
+            )
         )
         expanded_std_grouped_rewards = std_grouped_rewards_per_prompt.repeat_interleave(
             self.num_generations, dim=0
@@ -860,9 +862,7 @@ class CustomTrainer(Trainer):
             reward_groups = rewards_per_func.view(
                 -1, self.num_generations, num_reward_channels
             )
-            centered_rewards = reward_groups - reward_groups.mean(
-                dim=1, keepdim=True
-            )
+            centered_rewards = reward_groups - reward_groups.mean(dim=1, keepdim=True)
             if self.scale_rewards:
                 std_rewards = reward_groups.std(dim=1, keepdim=True)
                 centered_rewards = centered_rewards / (std_rewards + 1e-4)
@@ -892,9 +892,7 @@ class CustomTrainer(Trainer):
         )
         if mo_advantages is not None:
             flat_mo_adv = mo_advantages.view(-1)
-            self._metrics[mode]["advantages/mo_mean"].append(
-                flat_mo_adv.mean().item()
-            )
+            self._metrics[mode]["advantages/mo_mean"].append(flat_mo_adv.mean().item())
             self._metrics[mode]["advantages/mo_std"].append(
                 flat_mo_adv.std(unbiased=False).item()
             )
