@@ -2,9 +2,9 @@
 {
     "dataset_name": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/huggingface/mehuldamani/big-math-digits",
     "hash_key": "problem",
-    "store_name": "eval_outputs/Math-models-fresh/big-math-digits",
+    "store_name": "eval_outputs/big-math-digits",
     "gpu_memory_utilization":0.9,
-    "log_path": "results/Math-models-fresh/big-math-digits"
+    "log_path": "results/big-math-digits"
 }, 
 {   
     "name":"Qwen2.5-3B-Instruct", 

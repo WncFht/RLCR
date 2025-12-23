@@ -372,6 +372,72 @@ class GRPOConfig(trl.GRPOConfig):
 
 
 @dataclass
+class MTPOConfig(GRPOConfig):
+    """
+    MTPO (Multi-Turn Policy Optimization) trainer config.
+
+    - Round 1: rollout <think> + <answer> (stop at `answer_stop_str`)
+    - Round 2: for each answer, rollout <analysis> + <confidence> (stop at `confidence_stop_str`)
+
+    `num_generations` is derived as `num_answer_generations * num_confidence_generations`.
+    `max_completion_length` is derived as `max_answer_length + max_confidence_length`.
+    """
+
+    num_answer_generations: int = field(
+        default=4,
+        metadata={
+            "help": "Number of answers sampled per prompt in round-1 (think+answer)."
+        },
+    )
+    num_confidence_generations: int = field(
+        default=4,
+        metadata={
+            "help": "Number of confidence samples per answer in round-2 (analysis+confidence)."
+        },
+    )
+
+    max_answer_length: int = field(
+        default=512,
+        metadata={"help": "Max tokens for round-1 generation (think+answer)."},
+    )
+    max_confidence_length: int = field(
+        default=512,
+        metadata={"help": "Max tokens for round-2 generation (analysis+confidence)."},
+    )
+
+    answer_stop_str: str = field(
+        default="</answer>",
+        metadata={"help": "Stop string for round-1 generation."},
+    )
+    confidence_stop_str: str = field(
+        default="</confidence>",
+        metadata={"help": "Stop string for round-2 generation."},
+    )
+
+    apply_answer_loss_on_first_confidence_only: bool = field(
+        default=True,
+        metadata={
+            "help": "If True, apply answer (round-1) token loss only on the first confidence sample per answer "
+            "(prevents scaling answer gradients by num_confidence_generations)."
+        },
+    )
+
+    def __post_init__(self):
+        # Derive total generations and total completion length for existing GRPO batching logic.
+        total_generations = (
+            self.num_answer_generations * self.num_confidence_generations
+        )
+        if total_generations < 2:
+            raise ValueError(
+                "MTPO requires num_answer_generations * num_confidence_generations >= 2."
+            )
+        self.num_generations = total_generations
+
+        self.max_completion_length = self.max_answer_length + self.max_confidence_length
+        super().__post_init__()
+
+
+@dataclass
 class ModelConfig:
     """
     Configuration class for the models.
