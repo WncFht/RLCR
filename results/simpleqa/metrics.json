@@ -1,0 +1,52 @@
+{
+    "Qwen2.5-3B-Instruct": {
+        "pass@1": 0.09292649098474341,
+        "brier_score": 0.7050829172445677,
+        "ece": 0.7265580212667592,
+        "auroc": 0.5910629066695068,
+        "accuracy": 0.09292649098474341,
+        "completion length": 1019.2297734627832,
+        "confidence level": 0.8157998150716597,
+        "confidence format adherence": 1.0
+    },
+    "Qwen2.5-7B-Instruct": {
+        "pass@1": 0.1183541377716135,
+        "brier_score": 0.7079160887656034,
+        "ece": 0.7672676837725382,
+        "auroc": 0.6089064343536968,
+        "accuracy": 0.1183541377716135,
+        "completion length": 919.4861303744799,
+        "confidence level": 0.8851595006934813,
+        "confidence format adherence": 1.0
+    },
+    "RLCR-hotpot-Qwen2_5-3B-Instruct-std": {
+        "pass@1": 0.042764678687008784,
+        "brier_score": 0.09193014840499307,
+        "ece": 0.09087563569116967,
+        "auroc": 0.8467245801706077,
+        "accuracy": 0.042764678687008784,
+        "completion length": 1046.0580212667592,
+        "confidence level": 0.11429218677762366,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-hotpot-Qwen2_5-3B-Instruct-std": {
+        "pass@1": 0.09986130374479889,
+        "brier_score": 0.2757406907096625,
+        "ece": 0.2750882801664355,
+        "auroc": 0.5949537750385208,
+        "accuracy": 0.09986130374479889,
+        "completion length": 1415.2397133610725,
+        "confidence level": 0.31502267683772534,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-hotpot-Qwen2_5-3B-Instruct-scale-weight": {
+        "pass@1": 0.1010171058714748,
+        "brier_score": 0.1510916551086454,
+        "ece": 0.19076514100785943,
+        "auroc": 0.642793468404989,
+        "accuracy": 0.1010171058714748,
+        "completion length": 1356.9253351826167,
+        "confidence level": 0.29178224687933424,
+        "confidence format adherence": 1.0
+    }
+}

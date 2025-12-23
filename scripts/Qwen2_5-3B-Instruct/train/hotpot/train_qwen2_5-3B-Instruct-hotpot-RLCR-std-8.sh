@@ -2,7 +2,10 @@ source /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/cond
 export LD_LIBRARY_PATH=/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/conda/envs/rlcr/lib:$LD_LIBRARY_PATH
 export PATH=/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/conda/envs/rlcr/bin:$PATH
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+nvidia-smi -L
+echo $CUDA_VISIBLE_DEVICES
+
 export WANDB_MODE=offline
 
 export HOME_DIR=/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian
@@ -19,7 +22,7 @@ cd $RLCR_DIR
 mkdir -p log
 nohup accelerate launch \
     --num_processes 8 \
-    --config_file deepspeed.yaml rl_runner.py \
+    --config_file deepspeed-8.yaml rl_runner.py \
     --config configs/Qwen2_5-3B-Instruct/hotpot/RLCR-std-8.yaml \
     > >(tee log/Qwen2_5-3B-Instruct-hotpot-RLCR-std-8.log) 2>&1
 

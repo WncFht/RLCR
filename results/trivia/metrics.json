@@ -1,0 +1,52 @@
+{
+    "Qwen2.5-3B-Instruct": {
+        "pass@1": 0.482,
+        "brier_score": 0.46800755,
+        "ece": 0.473095,
+        "auroc": 0.5813689541645973,
+        "accuracy": 0.482,
+        "completion length": 931.7475,
+        "confidence level": 0.947095,
+        "confidence format adherence": 1.0
+    },
+    "Qwen2.5-7B-Instruct": {
+        "pass@1": 0.5805,
+        "brier_score": 0.40117125,
+        "ece": 0.40572499999999995,
+        "auroc": 0.576300279546115,
+        "accuracy": 0.5805,
+        "completion length": 760.1415,
+        "confidence level": 0.985975,
+        "confidence format adherence": 1.0
+    },
+    "RLCR-hotpot-Qwen2_5-3B-Instruct-std": {
+        "pass@1": 0.483,
+        "brier_score": 0.267132833,
+        "ece": 0.23964199999999997,
+        "auroc": 0.7384256200167393,
+        "accuracy": 0.483,
+        "completion length": 953.8875,
+        "confidence level": 0.658192,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-hotpot-Qwen2_5-3B-Instruct-std": {
+        "pass@1": 0.5035,
+        "brier_score": 0.289524452005,
+        "ece": 0.2555589500000001,
+        "auroc": 0.7004658228253184,
+        "accuracy": 0.5035,
+        "completion length": 1343.728,
+        "confidence level": 0.6426459500000001,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-hotpot-Qwen2_5-3B-Instruct-scale-weight": {
+        "pass@1": 0.5155,
+        "brier_score": 0.20769125000000002,
+        "ece": 0.02737499999999997,
+        "auroc": 0.7379341547226884,
+        "accuracy": 0.5155,
+        "completion length": 1277.7295,
+        "confidence level": 0.533925,
+        "confidence format adherence": 1.0
+    }
+}

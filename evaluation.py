@@ -28,6 +28,23 @@ def main(global_args, local_configs, debug_mode=False):
             f"DEBUG MODE activated: Using existing sample_size = {global_args.sample_size}"
         )
 
+    metrics_path = (
+        os.path.join(global_args.log_path, "metrics.json")
+        if global_args.log_path is not None
+        else None
+    )
+    existing_metrics = {}
+    if metrics_path and os.path.exists(metrics_path):
+        try:
+            with open(metrics_path, "r") as f:
+                existing_metrics = json.load(f)
+            print(
+                f"Loaded existing metrics for {len(existing_metrics)} configs from {metrics_path}"
+            )
+        except Exception as exc:
+            print(f"Failed to load existing metrics from {metrics_path}: {exc}")
+            existing_metrics = {}
+
     try:
         dataset = datasets.load_from_disk("./" + global_args.dataset_name)
     except:
@@ -75,6 +92,12 @@ def main(global_args, local_configs, debug_mode=False):
         available = False
         run_metrics[config.name] = {}
 
+        if config.name in existing_metrics:
+            print(
+                f"Skipping {config.name} because metrics already exist in metrics.json"
+            )
+            continue
+
         if existing_dataset is not None:
             if f"{config.name}-output_0" in existing_dataset.column_names:
                 available = True
@@ -120,9 +143,6 @@ def main(global_args, local_configs, debug_mode=False):
         outputs = llm.generate(texts, sampling_params=sampling_params)
 
         ##### POST-GENERATION PROCESSING #####
-
-        # ... (POST-GENERATION PROCESSING CODE REMAINS THE SAME) ...
-        # (因代码过长，此处省略与原脚本一致的中间处理逻辑，例如 ans_at_end, gen_then_classify 等)
 
         if "ans_at_end" in config.vllm_task:
             inst = "Thinking time ended \n\n. My final answer is "
@@ -390,12 +410,14 @@ def main(global_args, local_configs, debug_mode=False):
                 print(f"{k}: {v}")
         except:
             pass
+    merged_metrics = copy.deepcopy(existing_metrics)
+    merged_metrics.update(all_metrics)
 
-    if global_args.log_path is not None:
+    if metrics_path is not None and all_metrics:
         if not os.path.exists(global_args.log_path):
             os.makedirs(global_args.log_path)
-        with open(global_args.log_path + "/metrics.json", "w") as f:
-            json.dump(all_metrics, f, indent=4)
+        with open(metrics_path, "w") as f:
+            json.dump(merged_metrics, f, indent=4)
 
     # final_dataset.push_to_hub(global_args.store_name, private=True)
 

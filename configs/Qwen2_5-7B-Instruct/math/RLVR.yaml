@@ -1,7 +1,7 @@
 # Model arguments
-model_name_or_path: Qwen/Qwen2.5-3B
-run_name: "RLVR-math-Qwen2_5-3B"
-output_dir: data/RLVR-math-Qwen2_5-3B
+model_name_or_path: Qwen/Qwen2.5-7B
+run_name: "RLVR-math-Qwen2_5-7B"
+output_dir: data/RLVR-math-Qwen2_5-7B
 model_revision: main
 torch_dtype: bfloat16
 attn_implementation: flash_attention_2

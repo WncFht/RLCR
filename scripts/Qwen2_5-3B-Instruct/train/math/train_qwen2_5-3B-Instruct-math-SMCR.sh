@@ -2,7 +2,7 @@ source /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/cond
 export LD_LIBRARY_PATH=/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/conda/envs/rlcr/lib:$LD_LIBRARY_PATH
 export PATH=/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/conda/envs/rlcr/bin:$PATH
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 export WANDB_MODE=offline
 
 export HOME_DIR=/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian
@@ -18,10 +18,10 @@ cd $RLCR_DIR
 
 mkdir -p log
 nohup accelerate launch \
-    --num_processes 8 \
-    --config_file deepspeed.yaml rl_runner.py \
-    --config configs/Qwen2_5-3B-Instruct/hotpot/RLCR-std-8.yaml \
-    > >(tee log/Qwen2_5-3B-Instruct-hotpot-RLCR-std-8.log) 2>&1
+    --num_processes 4 \
+    --config_file deepspeed.yaml SMCR_runner.py \
+    --config configs/Qwen2_5-3B-Instruct/math/SMCR.yaml \
+    > >(tee log/Qwen2_5-3B-Instruct-math-SMCR.log) 2>&1 &
 
 PID=$!
 echo "Training started with PID: $PID"

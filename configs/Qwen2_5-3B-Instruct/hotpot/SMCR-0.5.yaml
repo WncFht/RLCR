@@ -1,6 +1,6 @@
 # Model arguments
 model_name_or_path: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/base_model/Qwen2.5-3B-Instruct
-run_name: "SMCR-hotpot-Qwen2.5-3B-Instruct"
+run_name: "SMCR-hotpot-Qwen2.5-3B-Instruct-scale-brier"
 output_dir: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-hotpot-Qwen2_5-3B-Instruct
 model_revision: main
 torch_dtype: bfloat16

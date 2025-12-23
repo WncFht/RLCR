@@ -1,7 +1,7 @@
 # Model arguments
-model_name_or_path: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/base_model/Qwen2.5-3B-Instruct
-run_name: "SMCR-hotpot-Qwen2.5-3B-Instruct"
-output_dir: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-hotpot-Qwen2_5-3B-Instruct
+model_name_or_path: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/base_model/Qwen2.5-7B-Instruct
+run_name: "SMCR-hotpot-Qwen2.5-7B-Instruct-scale-rewards"
+output_dir: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-hotpot-Qwen2_5-7B-Instruct-scale-rewards
 model_revision: main
 torch_dtype: bfloat16
 attn_implementation: flash_attention_2
@@ -47,7 +47,7 @@ save_strategy: "steps"
 save_steps: 60
 save_total_limit: 3
 save_only_model: true
-scale_rewards: false
+scale_rewards: true
 seed: 43
 sys_prompt_name: "instruct_tabc"
 temperature: 0.7

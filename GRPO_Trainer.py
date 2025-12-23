@@ -1016,6 +1016,19 @@ class CustomTrainer(Trainer):
             model, input_ids, attention_mask, logits_to_keep
         )
 
+        with torch.no_grad():
+            completion_lengths = completion_mask.sum(dim=1).clamp(min=1)
+            entropy_per_sample = -(
+                (per_token_logps * completion_mask).sum(dim=1) / completion_lengths
+            )
+            gathered_entropy = self.accelerator.gather_for_metrics(entropy_per_sample)
+            self._metrics[mode]["policy/entropy_per_token"].append(
+                gathered_entropy.nanmean().item()
+            )
+            self._metrics[mode]["policy/entropy_per_token_std"].append(
+                nanstd(gathered_entropy).item()
+            )
+
         if self.beta != 0.0:
             with torch.no_grad():
                 if self.ref_model is not None:

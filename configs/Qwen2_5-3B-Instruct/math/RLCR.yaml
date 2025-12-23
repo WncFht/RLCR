@@ -1,13 +1,13 @@
 # Model arguments
-model_name_or_path: Qwen/Qwen2.5-3B-Instruct
-run_name: "RLCR-math-Qwen2_5-3B-Instruct"
-output_dir: data/RLCR-math-Qwen2_5-3B-Instruct
+model_name_or_path: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/base_model/Qwen2.5-3B-Instruct
+run_name: "RLCR-math-Qwen2.5-3B-Instruct"
+output_dir: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/RLCR-math-Qwen2_5-3B-Instruct
 model_revision: main
 torch_dtype: bfloat16
 attn_implementation: flash_attention_2
 
 # Data training arguments
-dataset_name: mehuldamani/big-math-digits
+dataset_name: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/huggingface/mehuldamani/big-math-digits
 # Num processes is less by 1 as vLLM is using 1 GPU
 num_processes: 1
 
