@@ -238,8 +238,14 @@ class GRPOConfig(trl.GRPOConfig):
 
     # Parameters that control the logging
     log_completions: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Whether to log the completions during training."},
+    )
+    print_completion: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, dump completion tables to JSON files under output_dir (instead of logging to wandb)."
+        },
     )
 
     completion_logging_steps: Optional[int] = field(
@@ -413,7 +419,6 @@ class MTPOConfig(GRPOConfig):
         default="</confidence>",
         metadata={"help": "Stop string for round-2 generation."},
     )
-
     apply_answer_loss_on_first_confidence_only: bool = field(
         default=True,
         metadata={

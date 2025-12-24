@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import textwrap
 from collections import defaultdict, deque
@@ -324,6 +325,7 @@ class CustomTrainer(Trainer):
         self.vllm_sleeping = False
 
         self.log_completions = args.log_completions
+        self.print_completion = getattr(args, "print_completion", False)
 
         # Datasets
         self.shuffle_dataset = args.shuffle_dataset
@@ -978,20 +980,22 @@ class CustomTrainer(Trainer):
         )
 
         # Log prompt and completion texts
-        num_completions_to_log = self.args.num_completions_to_log
-        self._textual_logs["step"].extend(
-            [str(self.state.global_step)] * num_completions_to_log
-        )
-        self._textual_logs["prompt"].extend(
-            gather_object(prompts_text)[0:num_completions_to_log]
-        )
-        self._textual_logs["completion"].extend(
-            gather_object(completions_text)[0:num_completions_to_log]
-        )
-        for i, name in enumerate(self.reward_func_names):
-            self._textual_logs["rewards"][name].extend(
-                rewards_per_func[:, i].tolist()[0:num_completions_to_log]
-            )
+        if self.log_completions or self.print_completion:
+            num_completions_to_log = self.args.num_completions_to_log
+            gathered_prompts = gather_object(prompts_text)[0:num_completions_to_log]
+            gathered_completions = gather_object(completions_text)[
+                0:num_completions_to_log
+            ]
+            if self.accelerator.is_main_process:
+                self._textual_logs["step"].extend(
+                    [str(self.state.global_step)] * num_completions_to_log
+                )
+                self._textual_logs["prompt"].extend(gathered_prompts)
+                self._textual_logs["completion"].extend(gathered_completions)
+                for i, name in enumerate(self.reward_func_names):
+                    self._textual_logs["rewards"][name].extend(
+                        rewards_per_func[:, i].tolist()[0:num_completions_to_log]
+                    )
 
         return {
             "prompt_ids": prompt_ids,
@@ -1171,7 +1175,54 @@ class CustomTrainer(Trainer):
             super().log(logs)
         self._metrics[mode].clear()
 
-        if self.accelerator.is_main_process and self.log_completions:
+        if (
+            self.accelerator.is_main_process
+            and self.print_completion
+            and self.completion_logging_steps is not None
+            and self.state.global_step % self.completion_logging_steps == 0
+            and len(self._textual_logs["step"]) > 0
+        ):
+            out_dir = os.path.join(self.args.output_dir, "completions")
+            os.makedirs(out_dir, exist_ok=True)
+            out_path = os.path.join(
+                out_dir, f"completions_{self.state.global_step}.table.json"
+            )
+
+            steps = list(self._textual_logs["step"])
+            prompts = list(self._textual_logs["prompt"])
+            completions = list(self._textual_logs["completion"])
+            reward_names = list(self.reward_func_names)
+            rewards = {
+                name: list(self._textual_logs["rewards"][name]) for name in reward_names
+            }
+
+            n = min(len(steps), len(prompts), len(completions))
+            columns = ["step", "prompt", "completion", *reward_names]
+            data = []
+            for idx in range(n):
+                row = [steps[idx], prompts[idx], completions[idx]]
+                for name in reward_names:
+                    row.append(rewards[name][idx] if idx < len(rewards[name]) else None)
+                data.append(row)
+
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {"columns": columns, "data": data, "mode": mode},
+                    f,
+                    ensure_ascii=False,
+                )
+
+            self._textual_logs["step"].clear()
+            self._textual_logs["prompt"].clear()
+            self._textual_logs["completion"].clear()
+            for name in list(self._textual_logs["rewards"].keys()):
+                self._textual_logs["rewards"][name].clear()
+
+        if (
+            self.accelerator.is_main_process
+            and self.log_completions
+            and (not self.print_completion)
+        ):
             if (
                 self.args.report_to
                 and "wandb" in self.args.report_to

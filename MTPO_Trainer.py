@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import textwrap
 from collections import defaultdict, deque
@@ -324,6 +325,7 @@ class CustomTrainer(Trainer):
         self.vllm_sleeping = False
 
         self.log_completions = args.log_completions
+        self.print_completion = getattr(args, "print_completion", False)
 
         # Datasets
         self.shuffle_dataset = args.shuffle_dataset
@@ -366,21 +368,65 @@ class CustomTrainer(Trainer):
             self.max_answer_length = half
             self.max_confidence_length = self.max_completion_length - half
 
+        def _stop_str_variants(stop_str: str) -> list[str]:
+            # Many tokenizers merge leading whitespace into the following token, so the model often emits
+            # " </answer>" or "\n</answer>" as a single token. We include common variants for robust stopping
+            # and robust token-level detection.
+            candidates = [stop_str]
+            if stop_str and not stop_str.startswith(" "):
+                candidates.append(f" {stop_str}")
+            candidates.append(f"\n{stop_str}")
+            if stop_str and not stop_str.startswith(" "):
+                candidates.append(f"\n {stop_str}")
+            # de-duplicate while preserving order
+            seen = set()
+            out = []
+            for s in candidates:
+                if s not in seen:
+                    out.append(s)
+                    seen.add(s)
+            return out
+
         self.answer_stop_str = getattr(args, "answer_stop_str", "</answer>")
         self.confidence_stop_str = getattr(args, "confidence_stop_str", "</confidence>")
+        self._answer_stop_str_variants = _stop_str_variants(self.answer_stop_str)
+        self._confidence_stop_str_variants = _stop_str_variants(
+            self.confidence_stop_str
+        )
         self.apply_answer_loss_on_first_confidence_only = getattr(
             args, "apply_answer_loss_on_first_confidence_only", True
         )
         if processing_class is not None:
-            self._answer_stop_token_ids = processing_class(
-                self.answer_stop_str, add_special_tokens=False
-            )["input_ids"]
-            self._confidence_stop_token_ids = processing_class(
-                self.confidence_stop_str, add_special_tokens=False
-            )["input_ids"]
+            self._answer_stop_token_id_variants = [
+                processing_class(s, add_special_tokens=False)["input_ids"]
+                for s in self._answer_stop_str_variants
+            ]
+            self._confidence_stop_token_id_variants = [
+                processing_class(s, add_special_tokens=False)["input_ids"]
+                for s in self._confidence_stop_str_variants
+            ]
+            self._answer_stop_token_id_variants = [
+                ids for ids in self._answer_stop_token_id_variants if ids
+            ]
+            self._confidence_stop_token_id_variants = [
+                ids for ids in self._confidence_stop_token_id_variants if ids
+            ]
+            # Keep the original single-sequence attributes for backward compatibility / readability.
+            self._answer_stop_token_ids = (
+                self._answer_stop_token_id_variants[0]
+                if self._answer_stop_token_id_variants
+                else []
+            )
+            self._confidence_stop_token_ids = (
+                self._confidence_stop_token_id_variants[0]
+                if self._confidence_stop_token_id_variants
+                else []
+            )
         else:
             self._answer_stop_token_ids = []
             self._confidence_stop_token_ids = []
+            self._answer_stop_token_id_variants = []
+            self._confidence_stop_token_id_variants = []
 
         # Split reward functions into answer / confidence parts for MTPO baselines.
         confidence_keywords = ["brier", "confidence", "log_likelihood"]
@@ -729,21 +775,64 @@ class CustomTrainer(Trainer):
             self._move_model_to_vllm()
             self._last_loaded_step = self.state.global_step
 
-        def _truncate_to_last_subseq(tokens: list[int], subseq: list[int]) -> list[int]:
-            if not subseq:
-                return tokens
-            # Search from the end (small lists, python loop is fine).
-            max_start = len(tokens) - len(subseq)
-            for start in range(max_start, -1, -1):
-                if tokens[start : start + len(subseq)] == subseq:
-                    return tokens[: start + len(subseq)]
-            return tokens
+        def _truncate_to_last_subseq_any(
+            tokens: list[int], subseqs: list[list[int]]
+        ) -> tuple[list[int], bool]:
+            best_end = None
+            for subseq in subseqs:
+                if not subseq:
+                    continue
+                # Search from the end (small lists, python loop is fine).
+                max_start = len(tokens) - len(subseq)
+                for start in range(max_start, -1, -1):
+                    if tokens[start : start + len(subseq)] == subseq:
+                        end = start + len(subseq)
+                        if best_end is None or end > best_end:
+                            best_end = end
+                        break
+            if best_end is None:
+                return tokens, False
+            return tokens[:best_end], True
 
-        def _strip_eos(tokens: list[int]) -> list[int]:
+        def _as_list(tokens: Any) -> list[int]:
+            # vLLM may return tuples; normalize to a Python list for downstream concatenation/slicing.
+            if isinstance(tokens, list):
+                return tokens
+            if isinstance(tokens, tuple):
+                return list(tokens)
+            if isinstance(tokens, torch.Tensor):
+                return [int(x) for x in tokens.tolist()]
+            # Fall back to best-effort conversion (e.g., numpy arrays).
+            return [int(x) for x in list(tokens)]
+
+        def _strip_eos(tokens: Any) -> list[int]:
+            tokens = _as_list(tokens)
             eos = self.processing_class.eos_token_id
             if eos in tokens:
                 return tokens[: tokens.index(eos)]
             return tokens
+
+        def _truncate_to_last_closed_tag(
+            tokens: list[int], open_tag: str, close_tag: str
+        ) -> tuple[list[int], bool]:
+            # Mirror SMCR logic: find the last <tag>...</tag> boundary in decoded text and
+            # map back to token indices by re-tokenizing the prefix substring.
+            if not tokens or self.processing_class is None:
+                return tokens, False
+            decoded = self.processing_class.decode(tokens, skip_special_tokens=False)
+            lowered = decoded.lower()
+            close_idx = lowered.rfind(close_tag)
+            if close_idx == -1:
+                return tokens, False
+            open_idx = lowered.rfind(open_tag, 0, close_idx)
+            if open_idx == -1:
+                return tokens, False
+            prefix_text = decoded[: close_idx + len(close_tag)]
+            prefix_tokens = self.processing_class(
+                prefix_text, add_special_tokens=False
+            )["input_ids"]
+            end = min(len(tokens), len(prefix_tokens))
+            return tokens[:end], True
 
         # -------------------------
         # Round 1: think + answer
@@ -763,7 +852,7 @@ class CustomTrainer(Trainer):
             n=1,
             temperature=self.temperature,
             max_tokens=self.max_answer_length,
-            stop=[self.answer_stop_str],
+            stop=self._answer_stop_str_variants,
             include_stop_str_in_output=True,
         )
 
@@ -774,19 +863,37 @@ class CustomTrainer(Trainer):
                 use_tqdm=False,
             )
 
-        answer_completion_ids_per_slot: list[list[int]] = [
-            output.token_ids for outputs in answer_outputs for output in outputs.outputs
-        ]
-        valid_answer_slots = []
-        for idx, tok in enumerate(answer_completion_ids_per_slot):
-            tok = _strip_eos(tok)
-            tok = _truncate_to_last_subseq(tok, self._answer_stop_token_ids)
-            answer_completion_ids_per_slot[idx] = tok
-            valid_answer_slots.append(
-                bool(self._answer_stop_token_ids)
-                and len(tok) >= len(self._answer_stop_token_ids)
-                and tok[-len(self._answer_stop_token_ids) :]
-                == self._answer_stop_token_ids
+        answer_completion_ids_per_slot: list[list[int]] = []
+        valid_answer_slots: list[bool] = []
+        answer_close_found_flags: list[bool] = []
+        answer_finish_stop_flags: list[bool] = []
+        for outputs in answer_outputs:
+            for output in outputs.outputs:
+                tok = _strip_eos(output.token_ids)
+                tok, found_close = _truncate_to_last_closed_tag(
+                    tok, "<answer>", "</answer>"
+                )
+                finish_reason = getattr(output, "finish_reason", None)
+                answer_close_found_flags.append(bool(found_close))
+                answer_finish_stop_flags.append(finish_reason == "stop")
+                if (
+                    (not found_close)
+                    and finish_reason == "stop"
+                    and self.processing_class.eos_token_id is not None
+                    and (len(tok) == 0 or tok[-1] != self.processing_class.eos_token_id)
+                ):
+                    # Do not inject tag tokens; just terminate the segment.
+                    tok = tok + [self.processing_class.eos_token_id]
+                answer_completion_ids_per_slot.append(tok)
+                valid_answer_slots.append(bool(found_close))
+
+        if answer_close_found_flags:
+            self._metrics[mode]["mtpo/answer_stop_token_found_ratio"].append(
+                float(sum(answer_close_found_flags)) / len(answer_close_found_flags)
+            )
+        if answer_finish_stop_flags:
+            self._metrics[mode]["mtpo/answer_finish_reason_stop_ratio"].append(
+                float(sum(answer_finish_stop_flags)) / len(answer_finish_stop_flags)
             )
 
         # -------------------------
@@ -804,7 +911,7 @@ class CustomTrainer(Trainer):
             n=1,
             temperature=self.temperature,
             max_tokens=self.max_confidence_length,
-            stop=[self.confidence_stop_str],
+            stop=self._confidence_stop_str_variants,
             include_stop_str_in_output=True,
         )
         with profiling_context(self, "vLLM.generate_confidence"):
@@ -817,19 +924,32 @@ class CustomTrainer(Trainer):
             self.vllm_sleeping = True
             self.accelerator.wait_for_everyone()
 
-        confidence_completion_ids: list[list[int]] = [
-            output.token_ids
-            for outputs in confidence_outputs
-            for output in outputs.outputs
-        ]
-        for idx, tok in enumerate(confidence_completion_ids):
-            tok = _strip_eos(tok)
-            tok = _truncate_to_last_subseq(tok, self._confidence_stop_token_ids)
-            if self.processing_class.eos_token_id is not None and (
-                len(tok) == 0 or tok[-1] != self.processing_class.eos_token_id
-            ):
-                tok = tok + [self.processing_class.eos_token_id]
-            confidence_completion_ids[idx] = tok
+        confidence_completion_ids: list[list[int]] = []
+        for outputs in confidence_outputs:
+            for output in outputs.outputs:
+                tok = _strip_eos(output.token_ids)
+                tok, found_stop = _truncate_to_last_closed_tag(
+                    tok, "<confidence>", "</confidence>"
+                )
+                finish_reason = getattr(output, "finish_reason", None)
+                has_text_stop = False
+                if (
+                    (not found_stop)
+                    and finish_reason == "stop"
+                    and self.confidence_stop_str
+                ):
+                    decoded = self.processing_class.decode(
+                        tok, skip_special_tokens=True
+                    )
+                    has_text_stop = decoded.rstrip().endswith(self.confidence_stop_str)
+                if (not found_stop) and (not has_text_stop) and finish_reason == "stop":
+                    # Do not inject tag tokens; just mark completion as ended.
+                    pass
+                if self.processing_class.eos_token_id is not None and (
+                    len(tok) == 0 or tok[-1] != self.processing_class.eos_token_id
+                ):
+                    tok = tok + [self.processing_class.eos_token_id]
+                confidence_completion_ids.append(tok)
 
         # -------------------------
         # Combine two rounds into one completion sequence.
@@ -1155,20 +1275,22 @@ class CustomTrainer(Trainer):
         self._metrics[mode]["reward_std"].append(grouped_total.std(dim=1).mean().item())
 
         # Log prompt and completion texts
-        num_completions_to_log = self.args.num_completions_to_log
-        self._textual_logs["step"].extend(
-            [str(self.state.global_step)] * num_completions_to_log
-        )
-        self._textual_logs["prompt"].extend(
-            gather_object(prompts_text)[0:num_completions_to_log]
-        )
-        self._textual_logs["completion"].extend(
-            gather_object(completions_text)[0:num_completions_to_log]
-        )
-        for i, name in enumerate(self.reward_func_names):
-            self._textual_logs["rewards"][name].extend(
-                rewards_per_func[:, i].tolist()[0:num_completions_to_log]
-            )
+        if self.log_completions or self.print_completion:
+            num_completions_to_log = self.args.num_completions_to_log
+            gathered_prompts = gather_object(prompts_text)[0:num_completions_to_log]
+            gathered_completions = gather_object(completions_text)[
+                0:num_completions_to_log
+            ]
+            if self.accelerator.is_main_process:
+                self._textual_logs["step"].extend(
+                    [str(self.state.global_step)] * num_completions_to_log
+                )
+                self._textual_logs["prompt"].extend(gathered_prompts)
+                self._textual_logs["completion"].extend(gathered_completions)
+                for i, name in enumerate(self.reward_func_names):
+                    self._textual_logs["rewards"][name].extend(
+                        rewards_per_func[:, i].tolist()[0:num_completions_to_log]
+                    )
 
         return {
             "prompt_ids": prompt_ids,
@@ -1360,7 +1482,54 @@ class CustomTrainer(Trainer):
             super().log(logs)
         self._metrics[mode].clear()
 
-        if self.accelerator.is_main_process and self.log_completions:
+        if (
+            self.accelerator.is_main_process
+            and self.print_completion
+            and self.completion_logging_steps is not None
+            and self.state.global_step % self.completion_logging_steps == 0
+            and len(self._textual_logs["step"]) > 0
+        ):
+            out_dir = os.path.join(self.args.output_dir, "completions")
+            os.makedirs(out_dir, exist_ok=True)
+            out_path = os.path.join(
+                out_dir, f"completions_{self.state.global_step}.table.json"
+            )
+
+            steps = list(self._textual_logs["step"])
+            prompts = list(self._textual_logs["prompt"])
+            completions = list(self._textual_logs["completion"])
+            reward_names = list(self.reward_func_names)
+            rewards = {
+                name: list(self._textual_logs["rewards"][name]) for name in reward_names
+            }
+
+            n = min(len(steps), len(prompts), len(completions))
+            columns = ["step", "prompt", "completion", *reward_names]
+            data = []
+            for idx in range(n):
+                row = [steps[idx], prompts[idx], completions[idx]]
+                for name in reward_names:
+                    row.append(rewards[name][idx] if idx < len(rewards[name]) else None)
+                data.append(row)
+
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {"columns": columns, "data": data, "mode": mode},
+                    f,
+                    ensure_ascii=False,
+                )
+
+            self._textual_logs["step"].clear()
+            self._textual_logs["prompt"].clear()
+            self._textual_logs["completion"].clear()
+            for name in list(self._textual_logs["rewards"].keys()):
+                self._textual_logs["rewards"][name].clear()
+
+        if (
+            self.accelerator.is_main_process
+            and self.log_completions
+            and (not self.print_completion)
+        ):
             if (
                 self.args.report_to
                 and "wandb" in self.args.report_to
