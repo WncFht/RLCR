@@ -1103,8 +1103,50 @@ class CustomTrainer(Trainer):
             self._metrics[mode][f"rewards/{reward_func_name}"].append(
                 torch.nanmean(reward_values).item()
             )
-            self._metrics[mode][f"rewards/{reward_func_name}/std"].append(
-                nanstd(reward_values).item()
+            batch_std_rewards = nanstd(reward_values).item()
+            self._metrics[mode][f"rewards/{reward_func_name}/batch_std"].append(
+                batch_std_rewards
+            )
+
+            group_std_rewards = 0.0
+            group_size = int(G * H)
+            if group_size > 0:
+                num_groups = reward_values.numel() // group_size
+                if num_groups > 0:
+                    grouped = reward_values[: num_groups * group_size].view(
+                        num_groups, group_size
+                    )
+                    valid = ~torch.isnan(grouped)
+                    counts = valid.sum(dim=1)
+                    has_enough = counts > 1
+                    if has_enough.any():
+                        mean = torch.nanmean(grouped, dim=1, keepdim=True)
+                        var = torch.nanmean((grouped - mean) ** 2, dim=1)
+                        counts_f = counts.to(var.dtype)
+                        denom = (counts_f - 1).clamp(min=1)
+                        var = var * counts_f / denom
+                        group_std_rewards = torch.sqrt(var)[has_enough].mean().item()
+            self._metrics[mode][f"rewards/{reward_func_name}/group_std"].append(
+                group_std_rewards
+            )
+
+            answer_std_rewards = 0.0
+            group_size = int(G * H)
+            if group_size > 0:
+                num_groups = reward_values.numel() // group_size
+                if num_groups > 0:
+                    grouped = reward_values[: num_groups * group_size].view(
+                        num_groups, G, H
+                    )
+                    valid = ~torch.isnan(grouped)
+                    counts = valid.sum(dim=2)
+                    has_enough = counts > 1
+                    if has_enough.any():
+                        mean = torch.nanmean(grouped, dim=2, keepdim=True)
+                        var = torch.nanmean((grouped - mean) ** 2, dim=2)
+                        answer_std_rewards = torch.sqrt(var)[has_enough].mean().item()
+            self._metrics[mode][f"rewards/{reward_func_name}/answer_std"].append(
+                answer_std_rewards
             )
 
         # Aggregate total reward stats (per prompt group)
