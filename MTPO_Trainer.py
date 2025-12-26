@@ -1005,6 +1005,7 @@ class CustomTrainer(Trainer):
             for row, mask_row in zip(completion_ids, completion_mask)
         ]
 
+        truncated_completions = None
         if self.mask_truncated_completions:
             truncated_completions = ~is_eos.any(dim=1)
             completion_mask = (
@@ -1013,6 +1014,24 @@ class CustomTrainer(Trainer):
 
         answer_token_mask = answer_token_mask * completion_mask
         confidence_token_mask = confidence_token_mask * completion_mask
+
+        # Span metrics: answer / confidence token lengths, aligned to completion_mask.
+        completion_lengths = completion_mask.sum(1).to(torch.float32)
+        answer_lengths = torch.tensor(stage1_lens, device=device, dtype=torch.float32)
+        answer_lengths = torch.minimum(answer_lengths, completion_lengths)
+        confidence_lengths = (completion_lengths - answer_lengths).clamp(min=0)
+        invalid_samples = valid_mask_local < 0.5
+        answer_lengths = answer_lengths.masked_fill(invalid_samples, float("nan"))
+        confidence_lengths = confidence_lengths.masked_fill(
+            invalid_samples, float("nan")
+        )
+        if truncated_completions is not None:
+            answer_lengths = answer_lengths.masked_fill(
+                truncated_completions, float("nan")
+            )
+            confidence_lengths = confidence_lengths.masked_fill(
+                truncated_completions, float("nan")
+            )
 
         # Concatenate prompt_mask with completion_mask for logit computation
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
@@ -1216,6 +1235,21 @@ class CustomTrainer(Trainer):
         self._metrics[mode]["completions/max_length"].append(
             agg_completion_mask.float().max().item()
         )
+
+        agg_answer_lengths = self.accelerator.gather_for_metrics(answer_lengths)
+        agg_confidence_lengths = self.accelerator.gather_for_metrics(confidence_lengths)
+        valid_answer_lengths = agg_answer_lengths[torch.isfinite(agg_answer_lengths)]
+        valid_confidence_lengths = agg_confidence_lengths[
+            torch.isfinite(agg_confidence_lengths)
+        ]
+        if valid_answer_lengths.numel() > 0:
+            self._metrics[mode]["spans/answer_length"].append(
+                valid_answer_lengths.float().mean().item()
+            )
+        if valid_confidence_lengths.numel() > 0:
+            self._metrics[mode]["spans/confidence_length"].append(
+                valid_confidence_lengths.float().mean().item()
+            )
 
         # Calculate mean reward per function (global)
         for i, reward_func_name in enumerate(self.reward_func_names):

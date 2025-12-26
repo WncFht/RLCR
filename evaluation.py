@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+from dataclasses import fields
 
 import datasets
 import numpy as np
@@ -45,9 +46,23 @@ def main(global_args, local_configs, debug_mode=False):
             print(f"Failed to load existing metrics from {metrics_path}: {exc}")
             existing_metrics = {}
 
-    try:
-        dataset = datasets.load_from_disk("./" + global_args.dataset_name)
-    except:
+    dataset_loaded = False
+    for candidate_path in (
+        global_args.dataset_name,
+        os.path.join(".", global_args.dataset_name)
+        if global_args.dataset_name is not None
+        else None,
+    ):
+        if not candidate_path:
+            continue
+        if os.path.exists(candidate_path):
+            try:
+                dataset = datasets.load_from_disk(candidate_path)
+                dataset_loaded = True
+                break
+            except Exception:
+                pass
+    if not dataset_loaded:
         dataset = load_dataset(global_args.dataset_name)
     dataset = dataset[global_args.split]
     dataset = dataset.map(lambda x: hash_dataset(x, global_args.hash_key))
@@ -439,8 +454,91 @@ if __name__ == "__main__":
     import argparse
     import json
 
+    GLOBAL_KEYS = {f.name for f in fields(GlobalArgs)}
+    LOCAL_KEYS = {f.name for f in fields(LocalConfig)}
+
+    def _deep_merge(base, override):
+        if base is None:
+            return copy.deepcopy(override)
+        if override is None:
+            return copy.deepcopy(base)
+        if isinstance(base, dict) and isinstance(override, dict):
+            out = copy.deepcopy(base)
+            for k, v in override.items():
+                if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+                    out[k] = _deep_merge(out[k], v)
+                else:
+                    out[k] = copy.deepcopy(v)
+            return out
+        return copy.deepcopy(override)
+
+    def _filter_keys(d, allowed):
+        return {k: v for k, v in d.items() if k in allowed}
+
+    def _expand_suite_config(suite, dataset_id):
+        if "datasets" not in suite or "models" not in suite:
+            raise ValueError("Suite config must contain 'datasets' and 'models'.")
+
+        datasets_list = suite.get("datasets") or []
+        dataset = next((d for d in datasets_list if d.get("id") == dataset_id), None)
+        if dataset is None:
+            available = [d.get("id") for d in datasets_list if d.get("id") is not None]
+            raise ValueError(
+                f"Unknown dataset id '{dataset_id}'. Available: {available}"
+            )
+
+        defaults = suite.get("defaults") or {}
+        global_defaults = defaults.get("global") or {}
+        local_defaults = defaults.get("local") or {}
+
+        global_args_dict = _deep_merge(global_defaults, dataset)
+        for k in ("id", "model_names"):
+            global_args_dict.pop(k, None)
+        global_args_dict = _filter_keys(global_args_dict, GLOBAL_KEYS)
+
+        model_entries = suite.get("models") or []
+        model_by_name = {m.get("name"): m for m in model_entries if m.get("name")}
+
+        model_names = dataset.get("model_names") or [
+            m.get("name") for m in model_entries if m.get("name")
+        ]
+        if not model_names:
+            raise ValueError("No models selected for this dataset.")
+
+        dataset_check_fn = dataset.get("check_fn")
+        dataset_check_fn_args = dataset.get("check_fn_args") or {}
+
+        local_configs = []
+        for name in model_names:
+            if name not in model_by_name:
+                raise ValueError(
+                    f"Dataset '{dataset_id}' references unknown model '{name}'."
+                )
+            model_cfg = model_by_name[name]
+            merged = _deep_merge(local_defaults, model_cfg)
+
+            if dataset_check_fn and merged.get("check_fn") is None:
+                merged["check_fn"] = dataset_check_fn
+            merged["check_fn_args"] = _deep_merge(
+                merged.get("check_fn_args") or {}, dataset_check_fn_args
+            )
+            local_configs.append(_filter_keys(merged, LOCAL_KEYS))
+
+        return [global_args_dict, *local_configs]
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, help="The name of the config to use")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        help="Dataset id when --config is a suite config (e.g. eval_configs/suite.json).",
+    )
+    parser.add_argument(
+        "--list-datasets",
+        action="store_true",
+        help="List dataset ids in a suite config and exit.",
+    )
     # ⬇️ 添加 --debug 参数
     parser.add_argument(
         "--debug",
@@ -452,6 +550,22 @@ if __name__ == "__main__":
     # read the json file
     with open(args.config) as f:
         config = json.load(f)
+
+    if isinstance(config, dict) and "datasets" in config:
+        if args.list_datasets:
+            for d in config.get("datasets") or []:
+                if d.get("id"):
+                    print(d["id"])
+            raise SystemExit(0)
+        if not args.dataset:
+            raise SystemExit(
+                "Config is a suite; pass --dataset <id> (or --list-datasets)."
+            )
+        config = _expand_suite_config(config, args.dataset)
+    elif isinstance(config, dict):
+        raise SystemExit(
+            "Unsupported config format. Expected a legacy list config or a suite config with 'datasets'."
+        )
 
     local_configs = []
     global_args = None

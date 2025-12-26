@@ -710,10 +710,46 @@ class CustomTrainer(Trainer):
             for row, mask_row in zip(completion_ids, completion_mask)
         ]
 
+        # Span metrics: answer / confidence token lengths (split at last </answer>)
+        answer_lengths = torch.full(
+            (completion_mask.size(0),), float("nan"), device=completion_mask.device
+        )
+        confidence_lengths = torch.full_like(answer_lengths, float("nan"))
+        if self.processing_class is not None:
+            close_str = "</answer>"
+            open_str = "<answer>"
+            for idx, tokens in enumerate(completion_ids_list):
+                if not tokens:
+                    continue
+                decoded = self.processing_class.decode(
+                    tokens, skip_special_tokens=False
+                )
+                lowered = decoded.lower()
+                answer_close_char = lowered.rfind(close_str)
+                if answer_close_char == -1:
+                    continue
+                answer_open_char = lowered.rfind(open_str, 0, answer_close_char)
+                if answer_open_char == -1:
+                    continue
+                prefix_text = decoded[: answer_close_char + len(close_str)]
+                prefix_tokens = self.processing_class(
+                    prefix_text, add_special_tokens=False
+                )["input_ids"]
+                seq_len = len(tokens)
+                ans_end = min(seq_len, len(prefix_tokens))
+                answer_lengths[idx] = float(ans_end)
+                confidence_lengths[idx] = float(max(0, seq_len - ans_end))
+
         if self.mask_truncated_completions:
             truncated_completions = ~is_eos.any(dim=1)
             completion_mask = (
                 completion_mask * (~truncated_completions).unsqueeze(1).int()
+            )
+            answer_lengths = answer_lengths.masked_fill(
+                truncated_completions, float("nan")
+            )
+            confidence_lengths = confidence_lengths.masked_fill(
+                truncated_completions, float("nan")
             )
 
         # Concatenate prompt_mask with completion_mask for logit computation
@@ -919,6 +955,21 @@ class CustomTrainer(Trainer):
         self._metrics[mode]["completions/max_length"].append(
             agg_completion_mask.float().max().item()
         )
+
+        agg_answer_lengths = self.accelerator.gather_for_metrics(answer_lengths)
+        agg_confidence_lengths = self.accelerator.gather_for_metrics(confidence_lengths)
+        valid_answer_lengths = agg_answer_lengths[torch.isfinite(agg_answer_lengths)]
+        valid_confidence_lengths = agg_confidence_lengths[
+            torch.isfinite(agg_confidence_lengths)
+        ]
+        if valid_answer_lengths.numel() > 0:
+            self._metrics[mode]["spans/answer_length"].append(
+                valid_answer_lengths.float().mean().item()
+            )
+        if valid_confidence_lengths.numel() > 0:
+            self._metrics[mode]["spans/confidence_length"].append(
+                valid_confidence_lengths.float().mean().item()
+            )
 
         agg_terminated_with_eos = self.accelerator.gather_for_metrics(is_eos.any(dim=1))
         term_completion_mask = agg_completion_mask[agg_terminated_with_eos]

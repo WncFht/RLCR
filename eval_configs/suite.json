@@ -1,0 +1,181 @@
+{
+  "version": 1,
+  "defaults": {
+    "global": {
+      "split": "test",
+      "gpu_memory_utilization": 0.9
+    },
+    "local": {
+      "tokenize_key": "prompt",
+      "n": 1,
+      "temperature": 0,
+      "max_tokens": 4096,
+      "seed": 42,
+      "vllm_task": [
+        "confidence_at_end",
+        "ans_at_end"
+      ]
+    }
+  },
+  "models": [
+    {
+      "name": "Qwen2.5-3B-Instruct",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/base_model/Qwen2.5-3B-Instruct",
+      "sys_prompt_name": "instruct_tac"
+    },
+    {
+      "name": "Qwen2.5-7B-Instruct",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/base_model/Qwen2.5-7B-Instruct",
+      "sys_prompt_name": "instruct_tac"
+    },
+    {
+      "name": "RLCR-hotpot-Qwen2_5-3B-Instruct-std",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/RLCR-hotpot-Qwen2_5-3B-Instruct-std",
+      "sys_prompt_name": "instruct_tabc"
+    },
+    {
+      "name": "SMCR-hotpot-Qwen2_5-3B-Instruct",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-hotpot-Qwen2_5-3B-Instruct",
+      "sys_prompt_name": "instruct_tabc"
+    },
+    {
+      "name": "SMCR-hotpot-Qwen2_5-3B-Instruct-only-brier",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-hotpot-Qwen2_5-3B-Instruct-only-brier",
+      "sys_prompt_name": "instruct_tabc"
+    },
+    {
+      "name": "SMCR-hotpot-Qwen2_5-3B-Instruct-only-brier-std",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-hotpot-Qwen2_5-3B-Instruct-only-brier-std",
+      "sys_prompt_name": "instruct_tabc"
+    },
+    {
+      "name": "SMCR-hotpot-Qwen2_5-3B-Instruct-std",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-hotpot-Qwen2_5-3B-Instruct-std",
+      "sys_prompt_name": "instruct_tabc"
+    },
+    {
+      "name": "SMCR-hotpot-Qwen2_5-3B-Instruct-scale-weight",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-hotpot-Qwen2_5-3B-Instruct-scale-weight",
+      "sys_prompt_name": "instruct_tabc"
+    },
+    {
+      "name": "RLCR-math-Qwen2_5-3B-Instruct",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/RLCR-math-Qwen2_5-3B-Instruct",
+      "sys_prompt_name": "instruct_tabc"
+    },
+    {
+      "name": "RLCR-math-Qwen2_5-3B-Instruct-std",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/RLCR-math-Qwen2_5-3B-Instruct-std",
+      "sys_prompt_name": "instruct_tabc"
+    },
+    {
+      "name": "SMCR-math-Qwen2_5-3B-Instruct",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-math-Qwen2_5-3B-Instruct",
+      "sys_prompt_name": "instruct_tabc"
+    },
+    {
+      "name": "SMCR-math-Qwen2_5-3B-Instruct-std",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-math-Qwen2_5-3B-Instruct-std",
+      "sys_prompt_name": "instruct_tabc"
+    },
+    {
+      "name": "SMCR-math-Qwen2_5-7B-Instruct",
+      "model": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/ckpt/RLCR/SMCR-math-Qwen2_5-7B-Instruct",
+      "sys_prompt_name": "instruct_tabc"
+    }
+  ],
+  "datasets": [
+    {
+      "id": "commonsenseqa",
+      "dataset_name": "data/commonsenseqa",
+      "hash_key": "problem",
+      "store_name": "eval_outputs/commonsenseqa",
+      "log_path": "results/commonsenseqa",
+      "check_fn": "llm_confidence_verifier"
+    },
+    {
+      "id": "gpqa",
+      "dataset_name": "data/gpqa",
+      "hash_key": "problem",
+      "store_name": "eval_outputs/gpqa",
+      "log_path": "results/gpqa",
+      "check_fn": "llm_confidence_verifier"
+    },
+    {
+      "id": "gsm8k",
+      "dataset_name": "data/gsm8k",
+      "hash_key": "problem",
+      "store_name": "eval_outputs/gsm8k",
+      "log_path": "results/gsm8k",
+      "check_fn": "confidence_verifier"
+    },
+    {
+      "id": "hotpot-eval-em",
+      "dataset_name": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/huggingface/mehuldamani/hotpot_qa",
+      "hash_key": "problem",
+      "store_name": "eval_outputs/hotpot-eval-em",
+      "log_path": "results/hotpot-eval-em",
+      "check_fn": "confidence_verifier",
+      "model_names": [
+        "Qwen2.5-3B-Instruct",
+        "Qwen2.5-7B-Instruct",
+        "RLCR-hotpot-Qwen2_5-3B-Instruct-std",
+        "SMCR-hotpot-Qwen2_5-3B-Instruct",
+        "SMCR-hotpot-Qwen2_5-3B-Instruct-only-brier",
+        "SMCR-hotpot-Qwen2_5-3B-Instruct-only-brier-std",
+        "SMCR-hotpot-Qwen2_5-3B-Instruct-std",
+        "SMCR-hotpot-Qwen2_5-3B-Instruct-scale-weight"
+      ]
+    },
+    {
+      "id": "hotpot-vanilla-eval-em",
+      "dataset_name": "data/hotpot_qa_vanilla",
+      "hash_key": "problem",
+      "store_name": "eval_outputs/hotpot-vanilla-eval-em",
+      "log_path": "results/hotpot-vanilla-eval-em",
+      "check_fn": "confidence_verifier"
+    },
+    {
+      "id": "math-500",
+      "dataset_name": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/huggingface/HuggingFaceH4/MATH-500",
+      "hash_key": "problem",
+      "store_name": "eval_outputs/math-500",
+      "log_path": "results/math-500",
+      "check_fn": "confidence_verifier"
+    },
+    {
+      "id": "simpleqa",
+      "dataset_name": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/huggingface/basicv8vc/SimpleQA",
+      "hash_key": "problem",
+      "store_name": "eval_outputs/simpleqa",
+      "log_path": "results/simpleqa",
+      "check_fn": "llm_confidence_verifier"
+    },
+    {
+      "id": "trivia",
+      "dataset_name": "data/trivia",
+      "hash_key": "question",
+      "store_name": "eval_outputs/trivia",
+      "log_path": "results/trivia",
+      "check_fn": "llm_confidence_verifier"
+    },
+    {
+      "id": "big-math-digits",
+      "dataset_name": "/mnt/dolphinfs/hdd_pool/docker/user/hadoop-hmart-poistar/fanghaotian/huggingface/mehuldamani/big-math-digits",
+      "hash_key": "problem",
+      "store_name": "eval_outputs/big-math-digits",
+      "log_path": "results/big-math-digits",
+      "check_fn": "confidence_verifier",
+      "model_names": [
+        "Qwen2.5-3B-Instruct",
+        "Qwen2.5-7B-Instruct",
+        "RLCR-math-Qwen2_5-3B-Instruct-std",
+        "SMCR-math-Qwen2_5-3B-Instruct",
+        "SMCR-math-Qwen2_5-3B-Instruct-std",
+        "RLCR-math-Qwen2_5-3B-Instruct",
+        "SMCR-math-Qwen2_5-7B-Instruct"
+      ]
+    }
+  ]
+}
+

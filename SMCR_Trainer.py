@@ -878,10 +878,11 @@ class CustomTrainer(Trainer):
         valid_answer_split = torch.ones(
             completion_mask.size(0), dtype=torch.bool, device=completion_mask.device
         )
-        split_positions = torch.full(
+        answer_lengths = torch.full(
             (completion_mask.size(0),), float("nan"), device=completion_mask.device
         )
-        split_ratios = torch.full_like(split_positions, float("nan"))
+        confidence_lengths = torch.full_like(answer_lengths, float("nan"))
+        split_ratios = torch.full_like(answer_lengths, float("nan"))
         for idx, tokens in enumerate(completion_ids_list):
             spans = self._extract_token_spans(tokens)
             seq_len = len(tokens)
@@ -892,21 +893,31 @@ class CustomTrainer(Trainer):
             start = max(0, min(start, seq_len))
             end = max(start, min(end, seq_len))
             answer_token_mask[idx, start:end] = 1.0
-            if end > 0:
-                split_positions[idx] = end - 1
-                if seq_len > 0:
-                    split_ratios[idx] = end / max(seq_len, 1)
+            a_len = max(0, end - start)
+            answer_lengths[idx] = float(a_len)
+            if seq_len > 0:
+                split_ratios[idx] = end / max(seq_len, 1)
             if spans.get("confidence") is not None:
                 c_start, c_end = spans["confidence"]
                 c_start = max(0, min(c_start, seq_len))
                 c_end = max(c_start, min(c_end, seq_len))
                 confidence_token_mask[idx, c_start:c_end] = 1.0
+                confidence_lengths[idx] = float(max(0, c_end - c_start))
+            else:
+                confidence_lengths[idx] = 0.0
 
         if self.mask_truncated_completions:
             truncated_completions = ~is_eos.any(dim=1)
             completion_mask = (
                 completion_mask * (~truncated_completions).unsqueeze(1).int()
             )
+            answer_lengths = answer_lengths.masked_fill(
+                truncated_completions, float("nan")
+            )
+            confidence_lengths = confidence_lengths.masked_fill(
+                truncated_completions, float("nan")
+            )
+            split_ratios = split_ratios.masked_fill(truncated_completions, float("nan"))
 
         # span mask 也需遵从 completion_mask，屏蔽掉 truncation/padding 的 token
         answer_token_mask = answer_token_mask * completion_mask
@@ -1142,13 +1153,21 @@ class CustomTrainer(Trainer):
             agg_completion_mask.float().max().item()
         )
 
-        agg_split_positions = self.accelerator.gather_for_metrics(split_positions)
+        agg_answer_lengths = self.accelerator.gather_for_metrics(answer_lengths)
+        agg_confidence_lengths = self.accelerator.gather_for_metrics(confidence_lengths)
         agg_split_ratios = self.accelerator.gather_for_metrics(split_ratios)
-        valid_split_positions = agg_split_positions[torch.isfinite(agg_split_positions)]
+        valid_answer_lengths = agg_answer_lengths[torch.isfinite(agg_answer_lengths)]
+        valid_confidence_lengths = agg_confidence_lengths[
+            torch.isfinite(agg_confidence_lengths)
+        ]
         valid_split_ratios = agg_split_ratios[torch.isfinite(agg_split_ratios)]
-        if valid_split_positions.numel() > 0:
-            self._metrics[mode]["spans/split_position"].append(
-                valid_split_positions.float().mean().item()
+        if valid_answer_lengths.numel() > 0:
+            self._metrics[mode]["spans/answer_length"].append(
+                valid_answer_lengths.float().mean().item()
+            )
+        if valid_confidence_lengths.numel() > 0:
+            self._metrics[mode]["spans/confidence_length"].append(
+                valid_confidence_lengths.float().mean().item()
             )
         if valid_split_ratios.numel() > 0:
             self._metrics[mode]["spans/split_ratio"].append(

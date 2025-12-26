@@ -78,5 +78,55 @@
         "completion length": 1799.1493555724032,
         "confidence level": 0.914764746019712,
         "confidence format adherence": 1.0
+    },
+    "RLCR-math-Qwen2_5-3B-Instruct": {
+        "pass@1": 0.8627748294162244,
+        "brier_score": 0.13882486732373012,
+        "ece": 0.18536770280515522,
+        "auroc": 0.5981803881967978,
+        "accuracy": 0.8627748294162244,
+        "completion length": 1412.3851402577711,
+        "confidence level": 0.6886277482941624,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-math-Qwen2_5-3B-Instruct": {
+        "pass@1": 0.8514025777103866,
+        "brier_score": 0.1099958499705164,
+        "ece": 0.10970760677280776,
+        "auroc": 0.6747846511712432,
+        "accuracy": 0.8514025777103866,
+        "completion length": 1567.6952236542836,
+        "confidence level": 0.9413982815264087,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-hotpot-Qwen2_5-3B-Instruct-only-brier": {
+        "pass@1": 0.7369219105382866,
+        "brier_score": 0.20057073540561035,
+        "ece": 0.11811978771796808,
+        "auroc": 0.628915098255476,
+        "accuracy": 0.7369219105382866,
+        "completion length": 1190.5693707354055,
+        "confidence level": 0.6222137983320698,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-hotpot-Qwen2_5-3B-Instruct-only-brier-std": {
+        "pass@1": 0.7437452615617892,
+        "brier_score": 0.18906027985343926,
+        "ece": 0.1541232927042632,
+        "auroc": 0.695020477836286,
+        "accuracy": 0.7437452615617892,
+        "completion length": 898.1660348749052,
+        "confidence level": 0.826892628448125,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-math-Qwen2_5-7B-Instruct": {
+        "pass@1": 0.9037149355572404,
+        "brier_score": 0.0864303260045489,
+        "ece": 0.08645943896891585,
+        "auroc": 0.5723491254029488,
+        "accuracy": 0.9037149355572404,
+        "completion length": 1295.4677786201669,
+        "confidence level": 0.9835936315390447,
+        "confidence format adherence": 1.0
     }
 }

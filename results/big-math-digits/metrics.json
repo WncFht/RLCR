@@ -1,0 +1,72 @@
+{
+    "Qwen2.5-3B-Instruct": {
+        "pass@1": 0.522,
+        "brier_score": 0.464219,
+        "ece": 0.4676000000000002,
+        "auroc": 0.5637514227544526,
+        "accuracy": 0.522,
+        "completion length": 2005.501,
+        "confidence level": 0.9856,
+        "confidence format adherence": 1.0
+    },
+    "Qwen2.5-7B-Instruct": {
+        "pass@1": 0.614,
+        "brier_score": 0.37892539999999997,
+        "ece": 0.38118,
+        "auroc": 0.5523873014801438,
+        "accuracy": 0.614,
+        "completion length": 1431.718,
+        "confidence level": 0.9951800000000001,
+        "confidence format adherence": 1.0
+    },
+    "RLCR-math-Qwen2_5-3B-Instruct-std": {
+        "pass@1": 0.599,
+        "brier_score": 0.18536057877577877,
+        "ece": 0.15598566566566657,
+        "auroc": 0.8173431196632792,
+        "accuracy": 0.599,
+        "completion length": 2873.538,
+        "confidence level": 0.6201523323323334,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-math-Qwen2_5-3B-Instruct-std": {
+        "pass@1": 0.615,
+        "brier_score": 0.21092440533,
+        "ece": 0.20380669999999995,
+        "auroc": 0.7818287403653259,
+        "accuracy": 0.615,
+        "completion length": 3431.604,
+        "confidence level": 0.6221467,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-math-Qwen2_5-3B-Instruct": {
+        "pass@1": 0.603,
+        "brier_score": 0.19165035566666672,
+        "ece": 0.188307,
+        "auroc": 0.8029249219895485,
+        "accuracy": 0.603,
+        "completion length": 2986.054,
+        "confidence level": 0.634849,
+        "confidence format adherence": 1.0
+    },
+    "RLCR-math-Qwen2_5-3B-Instruct": {
+        "pass@1": 0.63,
+        "brier_score": 0.1804025,
+        "ece": 0.12004999999999992,
+        "auroc": 0.7791655941655942,
+        "accuracy": 0.63,
+        "completion length": 2525.531,
+        "confidence level": 0.5858499999999999,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-math-Qwen2_5-7B-Instruct": {
+        "pass@1": 0.706,
+        "brier_score": 0.18632839999999998,
+        "ece": 0.18315999999999996,
+        "auroc": 0.7609580659459251,
+        "accuracy": 0.706,
+        "completion length": 2574.184,
+        "confidence level": 0.75184,
+        "confidence format adherence": 1.0
+    }
+}

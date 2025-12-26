@@ -38,5 +38,45 @@
         "completion length": 1341.762,
         "confidence level": 0.4352,
         "confidence format adherence": 1.0
+    },
+    "Qwen2.5-3B-Instruct": {
+        "pass@1": 0.302,
+        "brier_score": 0.5117301999999999,
+        "ece": 0.5225799999999999,
+        "auroc": 0.6803449780830756,
+        "accuracy": 0.302,
+        "completion length": 887.502,
+        "confidence level": 0.8205800000000001,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-hotpot-Qwen2_5-3B-Instruct": {
+        "pass@1": 0.424,
+        "brier_score": 0.18610500000000002,
+        "ece": 0.05009999999999997,
+        "auroc": 0.7888004454926625,
+        "accuracy": 0.424,
+        "completion length": 1189.344,
+        "confidence level": 0.4725,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-hotpot-Qwen2_5-3B-Instruct-only-brier": {
+        "pass@1": 0.334,
+        "brier_score": 0.17487,
+        "ece": 0.03060000000000006,
+        "auroc": 0.7844581108054162,
+        "accuracy": 0.334,
+        "completion length": 1134.236,
+        "confidence level": 0.31220000000000003,
+        "confidence format adherence": 1.0
+    },
+    "SMCR-hotpot-Qwen2_5-3B-Instruct-only-brier-std": {
+        "pass@1": 0.328,
+        "brier_score": 0.21214680002,
+        "ece": 0.19063979999999997,
+        "auroc": 0.8069468641114983,
+        "accuracy": 0.328,
+        "completion length": 980.606,
+        "confidence level": 0.3756402,
+        "confidence format adherence": 1.0
     }
 }

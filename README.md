@@ -102,13 +102,19 @@ CUDA_VISIBLE_DEVICES=0 inference_example.py
 Run evaluation on a dataset using a config:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python evaluation.py --config eval_configs/Hotpot-models/trivia.json
+CUDA_VISIBLE_DEVICES=0 python evaluation.py --config eval_configs/suite.json --dataset trivia
 ```
 
-For a full eval suite on a single GPU (We already provide the outputs/results from this):
+For a full eval suite (multi-GPU runner):
 
 ```bash
-bash eval_runs.sh
+bash scripts/eval_runs_all.sh --gpus 0,1,2
+```
+
+Collect per-dataset `results/*/metrics.json` into a single Excel/CSV:
+
+```bash
+python scripts/collect_metrics.py --results-dir results --update-workbook SMCR.xlsx
 ```
 
 ### 📝 Notes
