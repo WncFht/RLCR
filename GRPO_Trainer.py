@@ -715,6 +715,7 @@ class CustomTrainer(Trainer):
             (completion_mask.size(0),), float("nan"), device=completion_mask.device
         )
         confidence_lengths = torch.full_like(answer_lengths, float("nan"))
+        split_ratios = torch.full_like(answer_lengths, float("nan"))
         if self.processing_class is not None:
             close_str = "</answer>"
             open_str = "<answer>"
@@ -739,6 +740,8 @@ class CustomTrainer(Trainer):
                 ans_end = min(seq_len, len(prefix_tokens))
                 answer_lengths[idx] = float(ans_end)
                 confidence_lengths[idx] = float(max(0, seq_len - ans_end))
+                if seq_len > 0:
+                    split_ratios[idx] = float(ans_end) / float(max(seq_len, 1))
 
         if self.mask_truncated_completions:
             truncated_completions = ~is_eos.any(dim=1)
@@ -751,6 +754,7 @@ class CustomTrainer(Trainer):
             confidence_lengths = confidence_lengths.masked_fill(
                 truncated_completions, float("nan")
             )
+            split_ratios = split_ratios.masked_fill(truncated_completions, float("nan"))
 
         # Concatenate prompt_mask with completion_mask for logit computation
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
@@ -958,10 +962,12 @@ class CustomTrainer(Trainer):
 
         agg_answer_lengths = self.accelerator.gather_for_metrics(answer_lengths)
         agg_confidence_lengths = self.accelerator.gather_for_metrics(confidence_lengths)
+        agg_split_ratios = self.accelerator.gather_for_metrics(split_ratios)
         valid_answer_lengths = agg_answer_lengths[torch.isfinite(agg_answer_lengths)]
         valid_confidence_lengths = agg_confidence_lengths[
             torch.isfinite(agg_confidence_lengths)
         ]
+        valid_split_ratios = agg_split_ratios[torch.isfinite(agg_split_ratios)]
         if valid_answer_lengths.numel() > 0:
             self._metrics[mode]["spans/answer_length"].append(
                 valid_answer_lengths.float().mean().item()
@@ -969,6 +975,10 @@ class CustomTrainer(Trainer):
         if valid_confidence_lengths.numel() > 0:
             self._metrics[mode]["spans/confidence_length"].append(
                 valid_confidence_lengths.float().mean().item()
+            )
+        if valid_split_ratios.numel() > 0:
+            self._metrics[mode]["spans/split_ratio"].append(
+                valid_split_ratios.float().mean().item()
             )
 
         agg_terminated_with_eos = self.accelerator.gather_for_metrics(is_eos.any(dim=1))

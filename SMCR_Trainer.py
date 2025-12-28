@@ -1228,23 +1228,6 @@ class CustomTrainer(Trainer):
             )
         self._metrics[mode]["reward"].append(mean_grouped_rewards.mean().item())
         self._metrics[mode]["reward_std"].append(std_grouped_rewards.mean().item())
-        if self.answer_reward_indices:
-            answer_group_mean = answer_rewards.view(-1, self.num_generations).mean(
-                dim=1
-            )
-            self._metrics[mode]["reward/answer"].append(answer_group_mean.mean().item())
-        if self.confidence_reward_indices:
-            confidence_group_mean = confidence_rewards.view(
-                -1, self.num_generations
-            ).mean(dim=1)
-            self._metrics[mode]["reward/confidence"].append(
-                confidence_group_mean.mean().item()
-            )
-        if self.format_reward_indices:
-            format_group_mean = format_rewards.view(-1, self.num_generations).mean(
-                dim=1
-            )
-            self._metrics[mode]["reward/format"].append(format_group_mean.mean().item())
 
         # Log prompt and completion texts
         if self.log_completions or self.print_completion:

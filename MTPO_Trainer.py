@@ -1020,10 +1020,17 @@ class CustomTrainer(Trainer):
         answer_lengths = torch.tensor(stage1_lens, device=device, dtype=torch.float32)
         answer_lengths = torch.minimum(answer_lengths, completion_lengths)
         confidence_lengths = (completion_lengths - answer_lengths).clamp(min=0)
+        split_ratios = torch.full_like(answer_lengths, float("nan"))
         invalid_samples = valid_mask_local < 0.5
         answer_lengths = answer_lengths.masked_fill(invalid_samples, float("nan"))
         confidence_lengths = confidence_lengths.masked_fill(
             invalid_samples, float("nan")
+        )
+        valid_split = (~invalid_samples) & (completion_lengths > 0)
+        split_ratios = torch.where(
+            valid_split,
+            answer_lengths / completion_lengths.clamp(min=1.0),
+            split_ratios,
         )
         if truncated_completions is not None:
             answer_lengths = answer_lengths.masked_fill(
@@ -1032,6 +1039,7 @@ class CustomTrainer(Trainer):
             confidence_lengths = confidence_lengths.masked_fill(
                 truncated_completions, float("nan")
             )
+            split_ratios = split_ratios.masked_fill(truncated_completions, float("nan"))
 
         # Concatenate prompt_mask with completion_mask for logit computation
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
@@ -1238,10 +1246,12 @@ class CustomTrainer(Trainer):
 
         agg_answer_lengths = self.accelerator.gather_for_metrics(answer_lengths)
         agg_confidence_lengths = self.accelerator.gather_for_metrics(confidence_lengths)
+        agg_split_ratios = self.accelerator.gather_for_metrics(split_ratios)
         valid_answer_lengths = agg_answer_lengths[torch.isfinite(agg_answer_lengths)]
         valid_confidence_lengths = agg_confidence_lengths[
             torch.isfinite(agg_confidence_lengths)
         ]
+        valid_split_ratios = agg_split_ratios[torch.isfinite(agg_split_ratios)]
         if valid_answer_lengths.numel() > 0:
             self._metrics[mode]["spans/answer_length"].append(
                 valid_answer_lengths.float().mean().item()
@@ -1249,6 +1259,10 @@ class CustomTrainer(Trainer):
         if valid_confidence_lengths.numel() > 0:
             self._metrics[mode]["spans/confidence_length"].append(
                 valid_confidence_lengths.float().mean().item()
+            )
+        if valid_split_ratios.numel() > 0:
+            self._metrics[mode]["spans/split_ratio"].append(
+                valid_split_ratios.float().mean().item()
             )
 
         # Calculate mean reward per function (global)
