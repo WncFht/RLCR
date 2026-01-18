@@ -89,6 +89,46 @@ class GRPOScriptArguments(ScriptArguments):
 
 
 @dataclass
+class STPOScriptArguments(GRPOScriptArguments):
+    """
+    Script arguments for STPO (Selective-Turn Policy Optimization).
+
+    STPO first samples many candidate answers, then selects a subset of answers per prompt for confidence rollouts.
+    """
+
+    answer_selection_reward_funcs: list[str] = field(
+        default_factory=lambda: ["accuracy", "format"],
+        metadata={
+            "help": "Reward functions used to select top answers from candidates (computed on answer-only completions)."
+        },
+    )
+    answer_selection_reward_weights: Optional[list[float]] = field(
+        default=None,
+        metadata={
+            "help": "Weights for answer_selection_reward_funcs. If None, all weights are 1.0."
+        },
+    )
+    answer_selection_format_pattern: Optional[str] = field(
+        default="ta",
+        metadata={
+            "help": "Format pattern used for answer selection rewards (typically 'ta' for think+answer only)."
+        },
+    )
+    answer_selection_strategy: str = field(
+        default="random",
+        metadata={
+            "help": "How to select answers from candidates. Choices: 'topk', 'random', 'balanced_accuracy'."
+        },
+    )
+    answer_selection_balanced_correct_fraction: float = field(
+        default=0.5,
+        metadata={
+            "help": "For 'balanced_accuracy' strategy: fraction of selected answers that should be correct (0..1)."
+        },
+    )
+
+
+@dataclass
 class GRPOConfig(trl.GRPOConfig):
     """
     args for callbacks, benchmarks etc
@@ -426,6 +466,14 @@ class MTPOConfig(GRPOConfig):
             "(prevents scaling answer gradients by num_confidence_generations)."
         },
     )
+    answer_pad_to: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "If set, pads the effective number of answer-loss samples per prompt to this value by applying "
+            "answer loss on additional (answer, confidence) samples. Must be in [1, num_answer_generations * "
+            "num_confidence_generations]."
+        },
+    )
 
     def __post_init__(self):
         # Derive total generations and total completion length for existing GRPO batching logic.
@@ -438,6 +486,89 @@ class MTPOConfig(GRPOConfig):
             )
         self.num_generations = total_generations
 
+        if self.answer_pad_to is not None and not (
+            1 <= int(self.answer_pad_to) <= total_generations
+        ):
+            raise ValueError(
+                "answer_pad_to must be in [1, num_answer_generations * num_confidence_generations] "
+                f"(got {self.answer_pad_to} vs {total_generations})."
+            )
+
+        self.max_completion_length = self.max_answer_length + self.max_confidence_length
+        super().__post_init__()
+
+
+@dataclass
+class STPOConfig(GRPOConfig):
+    """
+    STPO (Selective-Turn Policy Optimization) trainer config.
+
+    - Round 1: sample `num_answer_candidates` answers per prompt (stop at `answer_stop_str`)
+    - Select: choose `num_answer_selected` answers per prompt by answer-selection rewards
+    - Round 2: for each selected answer, sample `num_confidence_generations = num_answer_candidates // num_answer_selected`
+      confidence completions (stop at `confidence_stop_str`)
+
+    `num_generations` is derived as `num_answer_candidates + num_answer_candidates`:
+    - `num_answer_candidates` answer-only samples (round-1)
+    - `num_answer_candidates` confidence samples (round-2, over selected answers)
+    `max_completion_length` is derived as `max_answer_length + max_confidence_length`.
+    """
+
+    num_answer_candidates: int = field(
+        default=32,
+        metadata={"help": "Number of candidate answers sampled per prompt in round-1."},
+    )
+    num_answer_selected: int = field(
+        default=8,
+        metadata={
+            "help": "Number of answers selected per prompt for confidence rollouts."
+        },
+    )
+
+    max_answer_length: int = field(
+        default=512,
+        metadata={"help": "Max tokens for round-1 generation (think+answer)."},
+    )
+    max_confidence_length: int = field(
+        default=512,
+        metadata={"help": "Max tokens for round-2 generation (analysis+confidence)."},
+    )
+
+    answer_stop_str: str = field(
+        default="</answer>",
+        metadata={"help": "Stop string for round-1 generation."},
+    )
+    confidence_stop_str: str = field(
+        default="</confidence>",
+        metadata={"help": "Stop string for round-2 generation."},
+    )
+    apply_answer_loss_on_first_confidence_only: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, apply answer (round-1) token loss only on the first confidence sample per selected "
+            "answer (prevents scaling answer gradients by num_confidence_generations)."
+        },
+    )
+
+    def __post_init__(self):
+        total_generations = int(self.num_answer_candidates)
+        if total_generations < 2:
+            raise ValueError("STPO requires num_answer_candidates >= 2.")
+        selected = int(self.num_answer_selected)
+        if selected < 1:
+            raise ValueError("STPO requires num_answer_selected >= 1.")
+        if total_generations % selected != 0:
+            raise ValueError(
+                "STPO requires num_answer_candidates % num_answer_selected == 0 "
+                f"(got {total_generations} % {selected})."
+            )
+        # Training batch contains:
+        # - C answer-only samples (all candidate answers)
+        # - G*H confidence samples, with H = C // G, so total is 2C
+        self.num_generations = 2 * total_generations
+        # Alias to MTPO naming for reuse in trainer code paths.
+        self.num_answer_generations = selected
+        self.num_confidence_generations = total_generations // selected
         self.max_completion_length = self.max_answer_length + self.max_confidence_length
         super().__post_init__()
 

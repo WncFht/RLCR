@@ -355,10 +355,14 @@ class CustomTrainer(Trainer):
             self.num_answer_generations * self.num_confidence_generations
             != self.num_generations
         ):
-            raise ValueError(
-                "MTPO requires args.num_generations == num_answer_generations * num_confidence_generations "
-                f"(got {self.num_generations} vs {self.num_answer_generations}*{self.num_confidence_generations})."
-            )
+            # MTPO uses a strict 2-level Cartesian product structure: num_generations = G * H.
+            # Other trainers (e.g. STPO) may reuse these field names but have a different batching layout.
+            is_mtpo_layout = getattr(args, "num_answer_candidates", None) is None
+            if is_mtpo_layout:
+                raise ValueError(
+                    "MTPO requires args.num_generations == num_answer_generations * num_confidence_generations "
+                    f"(got {self.num_generations} vs {self.num_answer_generations}*{self.num_confidence_generations})."
+                )
 
         self.max_answer_length = getattr(args, "max_answer_length", None)
         self.max_confidence_length = getattr(args, "max_confidence_length", None)
@@ -396,6 +400,9 @@ class CustomTrainer(Trainer):
         self.apply_answer_loss_on_first_confidence_only = getattr(
             args, "apply_answer_loss_on_first_confidence_only", True
         )
+        self.answer_pad_to = getattr(args, "answer_pad_to", None)
+        if self.answer_pad_to is not None:
+            self.answer_pad_to = int(self.answer_pad_to)
         if processing_class is not None:
             self._answer_stop_token_id_variants = [
                 processing_class(s, add_special_tokens=False)["input_ids"]
@@ -986,16 +993,84 @@ class CustomTrainer(Trainer):
         completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
 
         # Token-level masks for round-1 / round-2 losses
+        G = int(self.num_answer_generations)
+        group_size = int(G * H)
+        if len(inputs) % group_size != 0:
+            raise ValueError(
+                f"Batch size ({len(inputs)}) must be divisible by G*H ({group_size})."
+            )
+        num_groups_local = len(inputs) // group_size
+
+        def _build_mtpo_sample_masks(
+            num_groups: int,
+        ) -> tuple[list[bool], list[bool]]:
+            mask_device = torch.device("cpu")
+            if self.answer_pad_to is None:
+                if self.apply_answer_loss_on_first_confidence_only:
+                    answer_mask_gh = torch.zeros(
+                        (G, H), dtype=torch.bool, device=mask_device
+                    )
+                    answer_mask_gh[:, 0] = True
+                else:
+                    answer_mask_gh = torch.ones(
+                        (G, H), dtype=torch.bool, device=mask_device
+                    )
+                confidence_mask_gh = torch.ones(
+                    (G, H), dtype=torch.bool, device=mask_device
+                )
+            else:
+                target = int(self.answer_pad_to)
+                if not (1 <= target <= group_size):
+                    raise ValueError(
+                        f"answer_pad_to must be in [1, G*H] (got {target} vs {group_size})."
+                    )
+                offset = int(self.state.global_step) % G if mode == "train" else 0
+                base = target // G
+                rem = target % G
+                counts = torch.full(
+                    (G,), base, dtype=torch.long, device=mask_device
+                )  # how many confidence slots to use per answer for answer-loss
+                if rem:
+                    for r in range(rem):
+                        counts[(offset + r) % G] += 1
+                if int(counts.max().item()) > H:
+                    raise ValueError(
+                        "answer_pad_to implies more than H samples per answer "
+                        f"(max {int(counts.max().item())} vs H={H})."
+                    )
+                answer_mask_gh = torch.zeros(
+                    (G, H), dtype=torch.bool, device=mask_device
+                )
+                for g in range(G):
+                    k = int(counts[g].item())
+                    if k > 0:
+                        answer_mask_gh[g, :k] = True
+
+                confidence_mask_gh = torch.ones(
+                    (G, H), dtype=torch.bool, device=mask_device
+                )
+                if H > 1:
+                    # Repurpose selected (g, c>0) slots as "answer-only padding".
+                    confidence_mask_gh[:, 1:] = ~answer_mask_gh[:, 1:]
+
+            answer_sample_mask = answer_mask_gh.reshape(-1).repeat(num_groups).tolist()
+            confidence_sample_mask = (
+                confidence_mask_gh.reshape(-1).repeat(num_groups).tolist()
+            )
+            return answer_sample_mask, confidence_sample_mask
+
+        answer_sample_mask, confidence_sample_mask = _build_mtpo_sample_masks(
+            num_groups_local
+        )
+
         answer_token_mask = torch.zeros_like(completion_mask, dtype=torch.float32)
         confidence_token_mask = torch.zeros_like(completion_mask, dtype=torch.float32)
         for i in range(len(inputs)):
             a_len = stage1_lens[i]
             c_len = stage2_lens[i]
-            if a_len > 0 and (
-                (not self.apply_answer_loss_on_first_confidence_only) or (i % H == 0)
-            ):
+            if a_len > 0 and answer_sample_mask[i]:
                 answer_token_mask[i, :a_len] = 1.0
-            if c_len > 0:
+            if c_len > 0 and confidence_sample_mask[i]:
                 confidence_token_mask[i, a_len : a_len + c_len] = 1.0
 
         # Convert tensor to a list of lists of token IDs. This will be passed to the reward function, avoiding the need
@@ -1187,19 +1262,65 @@ class CustomTrainer(Trainer):
                 f"Total rewards length ({total_rewards.numel()}) must be divisible by G*H ({G * H})."
             )
 
-        # Answer baseline: group by prompt, across G answers (collapse H by mean)
         grouped_answer = answer_rewards.view(-1, G, H)
-        answer_per_answer = grouped_answer.mean(dim=2)  # (P, G)
-        ans_mean = answer_per_answer.mean(dim=1, keepdim=True)
-        ans_std = answer_per_answer.std(dim=1, keepdim=True, unbiased=False)
-        answer_adv_per_answer = answer_per_answer - ans_mean
-        if self.scale_rewards:
-            answer_adv_per_answer = answer_adv_per_answer / (ans_std + 1e-4)
-        answer_adv = answer_adv_per_answer.unsqueeze(2).expand(-1, -1, H)
-        if self.apply_answer_loss_on_first_confidence_only:
-            apply_mask = torch.zeros_like(answer_adv)
-            apply_mask[:, :, 0] = 1.0
-            answer_adv = answer_adv * apply_mask
+        if self.answer_pad_to is None:
+            # Backward-compatible baseline: group by prompt, across G answers (collapse H by mean)
+            answer_per_answer = grouped_answer.mean(dim=2)  # (P, G)
+            ans_mean = answer_per_answer.mean(dim=1, keepdim=True)
+            ans_std = answer_per_answer.std(dim=1, keepdim=True, unbiased=False)
+            answer_adv_per_answer = answer_per_answer - ans_mean
+            if self.scale_rewards:
+                answer_adv_per_answer = answer_adv_per_answer / (ans_std + 1e-4)
+            answer_adv = answer_adv_per_answer.unsqueeze(2).expand(-1, -1, H)
+            if self.apply_answer_loss_on_first_confidence_only:
+                apply_mask = torch.zeros_like(answer_adv)
+                apply_mask[:, :, 0] = 1.0
+                answer_adv = answer_adv * apply_mask
+        else:
+            # Padded baseline: compute stats over the selected answer-loss samples per prompt.
+            target = int(self.answer_pad_to)
+            group_size = int(G * H)
+            if not (1 <= target <= group_size):
+                raise ValueError(
+                    f"answer_pad_to must be in [1, G*H] (got {target} vs {group_size})."
+                )
+            offset = int(self.state.global_step) % G if mode == "train" else 0
+            base = target // G
+            rem = target % G
+            counts = torch.full(
+                (G,), base, dtype=torch.long, device=grouped_answer.device
+            )
+            if rem:
+                for r in range(rem):
+                    counts[(offset + r) % G] += 1
+            if int(counts.max().item()) > H:
+                raise ValueError(
+                    "answer_pad_to implies more than H samples per answer "
+                    f"(max {int(counts.max().item())} vs H={H})."
+                )
+            answer_mask_gh = torch.zeros(
+                (G, H), dtype=torch.bool, device=grouped_answer.device
+            )
+            for g in range(G):
+                k = int(counts[g].item())
+                if k > 0:
+                    answer_mask_gh[g, :k] = True
+            answer_mask_flat = (
+                answer_mask_gh.reshape(1, -1)
+                .expand(grouped_answer.size(0), -1)
+                .to(grouped_answer.dtype)
+            )
+            grouped_answer_flat = grouped_answer.reshape(grouped_answer.size(0), -1)
+            denom = answer_mask_flat.sum(dim=1).clamp(min=1.0)
+            ans_mean = (grouped_answer_flat * answer_mask_flat).sum(dim=1) / denom
+            diff = grouped_answer_flat - ans_mean.unsqueeze(1)
+            var = ((diff * answer_mask_flat) ** 2).sum(dim=1) / denom
+            ans_std = torch.sqrt(var)
+            answer_adv_flat = diff
+            if self.scale_rewards:
+                answer_adv_flat = answer_adv_flat / (ans_std.unsqueeze(1) + 1e-4)
+            answer_adv_flat = answer_adv_flat * answer_mask_flat
+            answer_adv = answer_adv_flat.reshape(-1, G, H)
 
         # Confidence baseline: group by answer, across H confidence samples
         grouped_conf = confidence_rewards.view(-1, G, H)

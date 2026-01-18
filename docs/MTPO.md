@@ -23,7 +23,8 @@ MTPO 把一次采样拆成两轮：
 在 `src/RLCR/MTPO_Trainer.py` 中实现的 baseline 分组为：
 
 - **Answer baseline：按 prompt 分组**  
-对同一 prompt 下的 `G` 个 answer 的 *answer-reward* 做均值/方差，得到 answer 的优势 `A_ans`。  
+默认：对同一 prompt 下的 `G` 个 answer 的 *answer-reward* 做均值/方差（先对 `H` 个 confidence 做均值），得到 answer 的优势 `A_ans`。  
+若设置了 `answer_pad_to`：则会把 answer-loss 的有效样本数“补齐”到 `answer_pad_to`，并在这 `answer_pad_to` 个样本上计算 mean/std（更像标准 GRPO 的 `num_generations` 视角）。
 
 - **Confidence baseline：按 answer 分组**  
 对同一 answer 下的 `H` 个 confidence 的 *confidence-reward* 做均值/方差，得到 confidence 的优势 `A_conf`。
@@ -33,6 +34,7 @@ MTPO 把一次采样拆成两轮：
 - `A_conf` 只作用在第 2 轮生成的 token（analysis+confidence）
 
 默认 `apply_answer_loss_on_first_confidence_only=true`：每个 answer 的第 1 轮 token 只在该 answer 的第一个 confidence 样本上计算一次损失，避免第 1 轮梯度被 `H` 倍放大。
+当设置 `answer_pad_to` 时，会用更多 (answer, confidence) 槽位来计算 answer 段 loss；这些额外槽位的 confidence token 不再计算 loss（等价于“只用来补齐 answer”）。
 
 ## 3. 可调参数（对应 `MTPOConfig`）
 
@@ -48,6 +50,7 @@ MTPO 把一次采样拆成两轮：
   - `confidence_stop_str`：第 2 轮停止字符串（默认 `</confidence>`）
 - 损失/归一化：
   - `apply_answer_loss_on_first_confidence_only`
+  - `answer_pad_to`：把每个 prompt 的 answer-loss 有效样本数补齐到该值（范围 `[1, G*H]`）
   - `scale_rewards`、`beta`、`loss_type`、`epsilon/epsilon_high`、`num_iterations` 等（沿用 GRPO/BNPO 配置）
 - 生成采样：
   - `temperature`
