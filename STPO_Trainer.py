@@ -26,6 +26,9 @@ class CustomTrainer(mtpo.CustomTrainer):
         reward_funcs: Union[RewardFunc, list[RewardFunc]],
         answer_selection_reward_funcs: Union[RewardFunc, list[RewardFunc]],
         answer_selection_reward_weights: Optional[list[float]] = None,
+        answer_reward_funcs: Optional[Union[RewardFunc, list[RewardFunc]]] = None,
+        answer_reward_weights: Optional[list[float]] = None,
+        metric_reward_funcs: Optional[Union[RewardFunc, list[RewardFunc]]] = None,
         args: mtpo.GRPOConfig = None,
         train_dataset: Optional[Union[mtpo.Dataset, mtpo.IterableDataset]] = None,
         eval_dataset: Optional[
@@ -79,6 +82,33 @@ class CustomTrainer(mtpo.CustomTrainer):
             answer_selection_balanced_correct_fraction
         )
 
+        # Answer-training rewards (applied on round-1 answer-only candidates).
+        if answer_reward_funcs is None:
+            answer_reward_funcs = self.answer_selection_reward_funcs
+        if not isinstance(answer_reward_funcs, list):
+            answer_reward_funcs = [answer_reward_funcs]
+        self.answer_reward_funcs = list(answer_reward_funcs)
+        if answer_reward_weights is not None:
+            if len(answer_reward_weights) != len(self.answer_reward_funcs):
+                raise ValueError(
+                    "answer_reward_weights must match answer_reward_funcs length "
+                    f"({len(answer_reward_weights)} vs {len(self.answer_reward_funcs)})."
+                )
+            self.answer_reward_weights = torch.tensor(
+                answer_reward_weights, dtype=torch.float32
+            )
+        else:
+            self.answer_reward_weights = torch.ones(
+                len(self.answer_reward_funcs), dtype=torch.float32
+            ) / max(1, len(self.answer_reward_funcs))
+
+        # Metric-only rewards (computed for logging only; do NOT affect training).
+        if metric_reward_funcs is None:
+            metric_reward_funcs = []
+        if not isinstance(metric_reward_funcs, list):
+            metric_reward_funcs = [metric_reward_funcs]
+        self.metric_reward_funcs = list(metric_reward_funcs)
+
         super().__init__(
             model=model,
             reward_funcs=reward_funcs,
@@ -92,6 +122,48 @@ class CustomTrainer(mtpo.CustomTrainer):
         )
 
         model_init_kwargs = self.args.model_init_kwargs or {}
+
+        self.answer_reward_func_names: list[str] = []
+        for reward_func in self.answer_reward_funcs:
+            if isinstance(reward_func, mtpo.nn.Module):
+                self.answer_reward_func_names.append(
+                    reward_func.config._name_or_path.split("/")[-1]
+                )
+            else:
+                try:
+                    self.answer_reward_func_names.append(reward_func.__name__)
+                except Exception:
+                    self.answer_reward_func_names.append(reward_func.func.__name__)
+
+        self.metric_reward_func_names: list[str] = []
+        for reward_func in self.metric_reward_funcs:
+            if isinstance(reward_func, mtpo.nn.Module):
+                self.metric_reward_func_names.append(
+                    reward_func.config._name_or_path.split("/")[-1]
+                )
+            else:
+                try:
+                    self.metric_reward_func_names.append(reward_func.__name__)
+                except Exception:
+                    self.metric_reward_func_names.append(reward_func.func.__name__)
+
+        # Keep reward metric naming consistent with MTPO: `rewards/<reward_func_name>`.
+        # Since STPO logs answer-side and confidence-side rewards on different sample sets,
+        # we require reward names to be unambiguous across stages.
+        overlap = set(self.answer_reward_func_names) & set(self.reward_func_names)
+        if overlap:
+            raise ValueError(
+                "STPO requires answer_reward_funcs and confidence_reward_funcs to have distinct reward function "
+                "names for logging consistency. Overlap: " + ", ".join(sorted(overlap))
+            )
+        overlap = set(self.answer_reward_func_names) & set(
+            self.metric_reward_func_names
+        )
+        if overlap:
+            raise ValueError(
+                "STPO requires answer_reward_funcs and metric_reward_funcs to have distinct reward function "
+                "names for logging consistency. Overlap: " + ", ".join(sorted(overlap))
+            )
 
         self.answer_selection_reward_func_names: list[str] = []
         for i, reward_func in enumerate(self.answer_selection_reward_funcs):
@@ -323,13 +395,12 @@ class CustomTrainer(mtpo.CustomTrainer):
             candidate_valid.append(group_valid)
 
         if answer_close_found_flags:
-            self._metrics[mode]["stpo/candidate_answer_close_ratio"].append(
-                float(sum(answer_close_found_flags)) / len(answer_close_found_flags)
+            close_ratio = float(sum(answer_close_found_flags)) / len(
+                answer_close_found_flags
             )
+            self._metrics[mode]["stpo/format_answer_close_ratio"].append(close_ratio)
         if answer_finish_stop_flags:
-            self._metrics[mode][
-                "stpo/candidate_answer_finish_reason_stop_ratio"
-            ].append(
+            self._metrics[mode]["stpo/answer_finish_reason_stop_ratio"].append(
                 float(sum(answer_finish_stop_flags)) / len(answer_finish_stop_flags)
             )
 
@@ -452,11 +523,86 @@ class CustomTrainer(mtpo.CustomTrainer):
         valid_grouped = flat_valid.view(-1, C)
         selection_scores_grouped = selection_scores.view(-1, C)
 
+        # -------------------------
+        # Answer-training rewards (Round-1 candidates)
+        # -------------------------
+        if self.answer_reward_funcs == self.answer_selection_reward_funcs:
+            answer_rewards_per_func = selection_rewards_per_func
+        else:
+            answer_rewards_per_func = torch.zeros(
+                len(selection_prompts),
+                len(self.answer_reward_funcs),
+                device=device,
+            )
+            for i, (reward_func, reward_func_name) in enumerate(
+                zip(self.answer_reward_funcs, self.answer_reward_func_names)
+            ):
+                if isinstance(reward_func, mtpo.nn.Module):
+                    raise ValueError(
+                        "answer_reward_funcs does not support model-based reward functions yet; "
+                        "please use custom python reward functions."
+                    )
+                with mtpo.profiling_context(self, f"stpo_answer/{reward_func_name}"):
+                    output_reward_func = reward_func(
+                        prompts=selection_prompts,
+                        completions=selection_completions,
+                        completion_ids=flat_candidate_ids,
+                        **selection_reward_kwargs,
+                    )
+                    output_reward_func = [
+                        reward if reward is not None else torch.nan
+                        for reward in output_reward_func
+                    ]
+                    answer_rewards_per_func[:, i] = torch.tensor(
+                        output_reward_func, dtype=torch.float32, device=device
+                    )
+
+        answer_rewards_per_func = torch.nan_to_num(answer_rewards_per_func, nan=0.0)
+        if answer_rewards_per_func.numel() > 0:
+            gathered_answer_rewards_per_func = mtpo.gather(answer_rewards_per_func)
+            for i, reward_func_name in enumerate(self.answer_reward_func_names):
+                reward_values = gathered_answer_rewards_per_func[:, i]
+                self._metrics[mode][f"rewards/{reward_func_name}"].append(
+                    torch.nanmean(reward_values).item()
+                )
+                self._metrics[mode][f"rewards/{reward_func_name}/batch_std"].append(
+                    mtpo.nanstd(reward_values).item()
+                )
+
+                group_std_rewards = 0.0
+                group_size = int(C)
+                if group_size > 0:
+                    num_groups = reward_values.numel() // group_size
+                    if num_groups > 0:
+                        grouped = reward_values[: num_groups * group_size].view(
+                            num_groups, group_size
+                        )
+                        valid = ~torch.isnan(grouped)
+                        counts = valid.sum(dim=1)
+                        has_enough = counts > 1
+                        if has_enough.any():
+                            mean = torch.nanmean(grouped, dim=1, keepdim=True)
+                            var = torch.nanmean((grouped - mean) ** 2, dim=1)
+                            counts_f = counts.to(var.dtype)
+                            denom = (counts_f - 1).clamp(min=1)
+                            var = var * counts_f / denom
+                            group_std_rewards = (
+                                torch.sqrt(var)[has_enough].mean().item()
+                            )
+                self._metrics[mode][f"rewards/{reward_func_name}/group_std"].append(
+                    group_std_rewards
+                )
+
+        ans_w = self.answer_reward_weights.to(answer_rewards_per_func.device)
+        answer_scores = (answer_rewards_per_func * ans_w.unsqueeze(0)).sum(dim=1)
+        answer_scores_grouped = answer_scores.view(-1, C)
+
         # Prefer selecting only candidates that are "format-correct" for the answer segment.
         # This is stricter than `candidate_valid` (which only checks for a closed </answer> tag).
         format_idx: Optional[int] = None
         for j, name in enumerate(self.answer_selection_reward_func_names):
-            if "format_answer_segment" in str(name):
+            n = str(name)
+            if "format_answer_segment" in n or n == "format_reward":
                 format_idx = j
                 break
         if format_idx is None:
@@ -466,19 +612,20 @@ class CustomTrainer(mtpo.CustomTrainer):
             format_ok_grouped = format_ok_flat.view(-1, C) & valid_grouped
 
         if format_ok_grouped.numel() > 0:
-            self._metrics[mode]["stpo/candidate_answer_format_ok_ratio"].append(
-                format_ok_grouped.float().mean().item()
+            ans_fmt_ratio = format_ok_grouped.float().mean().item()
+            self._metrics[mode]["stpo/format_answer_segment_ratio"].append(
+                ans_fmt_ratio
             )
 
         # Answer baseline: computed over all candidate answers (C) per prompt group,
         # but centered/scaled w.r.t. format-correct candidates (so we keep signal when format collapses).
-        valid_f = format_ok_grouped.to(selection_scores_grouped.dtype)
+        valid_f = format_ok_grouped.to(answer_scores_grouped.dtype)
         valid_counts = valid_f.sum(dim=1, keepdim=True)
         denom = valid_counts.clamp(min=1.0)
-        ans_mean_all = (selection_scores_grouped * valid_f).sum(
+        ans_mean_all = (answer_scores_grouped * valid_f).sum(
             dim=1, keepdim=True
         ) / denom
-        diff_all = selection_scores_grouped - ans_mean_all
+        diff_all = answer_scores_grouped - ans_mean_all
         var_all = ((diff_all * valid_f) ** 2).sum(dim=1, keepdim=True) / denom
         ans_std_all = torch.sqrt(var_all)
         answer_adv_candidates = diff_all
@@ -645,9 +792,11 @@ class CustomTrainer(mtpo.CustomTrainer):
                 float(sum(h_eff_per_group)) / len(h_eff_per_group)
             )
         if selected_format_ok_flags:
-            self._metrics[mode]["stpo/selection_selected_valid_ratio"].append(
-                float(sum(1.0 for x in selected_format_ok_flags if x))
-                / len(selected_format_ok_flags)
+            sel_valid_ratio = float(
+                sum(1.0 for x in selected_format_ok_flags if x)
+            ) / len(selected_format_ok_flags)
+            self._metrics[mode]["stpo/format_answer_selected_ratio"].append(
+                sel_valid_ratio
             )
 
         # Answer advantages are computed over all C candidate answers. We will apply them on the
@@ -1014,30 +1163,138 @@ class CustomTrainer(mtpo.CustomTrainer):
                         output_reward_func, dtype=torch.float32, device=device
                     )
 
+        metric_rewards_per_func = None
+        if self.metric_reward_funcs:
+            metric_rewards_per_func = torch.zeros(
+                len(reward_prompts), len(self.metric_reward_funcs), device=device
+            )
+            for i, (reward_func, reward_func_name) in enumerate(
+                zip(self.metric_reward_funcs, self.metric_reward_func_names)
+            ):
+                if isinstance(reward_func, mtpo.nn.Module):
+                    raise ValueError(
+                        "metric_reward_funcs does not support model-based reward functions yet; "
+                        "please use custom python reward functions."
+                    )
+                with mtpo.profiling_context(self, f"stpo_metric/{reward_func_name}"):
+                    output_reward_func = reward_func(
+                        prompts=reward_prompts,
+                        completions=reward_completions,
+                        completion_ids=reward_completion_ids_list,
+                        **reward_kwargs,
+                    )
+                    output_reward_func = [
+                        reward if reward is not None else torch.nan
+                        for reward in output_reward_func
+                    ]
+                    metric_rewards_per_func[:, i] = torch.tensor(
+                        output_reward_func, dtype=torch.float32, device=device
+                    )
+
         rewards_per_func = mtpo.gather(rewards_per_func)
         rewards_per_func = torch.nan_to_num(rewards_per_func, nan=0.0)
+        if metric_rewards_per_func is not None:
+            metric_rewards_per_func = mtpo.gather(metric_rewards_per_func)
+            metric_rewards_per_func = torch.nan_to_num(metric_rewards_per_func, nan=0.0)
         valid_mask = mtpo.gather(reward_valid_mask_local)
+
+        if metric_rewards_per_func is not None and metric_rewards_per_func.numel() > 0:
+            already_logged = set(self.reward_func_names) | set(
+                self.answer_reward_func_names
+            )
+            for i, reward_func_name in enumerate(self.metric_reward_func_names):
+                if reward_func_name in already_logged:
+                    continue
+                reward_values = metric_rewards_per_func[:, i]
+                self._metrics[mode][f"rewards/{reward_func_name}"].append(
+                    torch.nanmean(reward_values).item()
+                )
+                self._metrics[mode][f"rewards/{reward_func_name}/batch_std"].append(
+                    mtpo.nanstd(reward_values).item()
+                )
+
+                group_std_rewards = 0.0
+                group_size = int(C)
+                if group_size > 0:
+                    num_groups = reward_values.numel() // group_size
+                    if num_groups > 0:
+                        grouped = reward_values[: num_groups * group_size].view(
+                            num_groups, group_size
+                        )
+                        valid = ~torch.isnan(grouped)
+                        counts = valid.sum(dim=1)
+                        has_enough = counts > 1
+                        if has_enough.any():
+                            mean = torch.nanmean(grouped, dim=1, keepdim=True)
+                            var = torch.nanmean((grouped - mean) ** 2, dim=1)
+                            counts_f = counts.to(var.dtype)
+                            denom = (counts_f - 1).clamp(min=1)
+                            var = var * counts_f / denom
+                            group_std_rewards = (
+                                torch.sqrt(var)[has_enough].mean().item()
+                            )
+                self._metrics[mode][f"rewards/{reward_func_name}/group_std"].append(
+                    group_std_rewards
+                )
+
+        # Extra STPO metrics (computed on Round-2 samples before masking by answer validity).
+        def _find_reward_idx(names: list[str], needle: str) -> Optional[int]:
+            needle = str(needle).lower()
+            for j, name in enumerate(names):
+                if needle in str(name).lower():
+                    return j
+            return None
+
+        if rewards_per_func.numel() > 0:
+            valid_bool = valid_mask.to(torch.bool)
+
+            def _lookup_metric(needle: str) -> Optional[torch.Tensor]:
+                idx = _find_reward_idx(self.reward_func_names, needle)
+                if idx is not None:
+                    return rewards_per_func[:, idx]
+                if metric_rewards_per_func is None:
+                    return None
+                midx = _find_reward_idx(self.metric_reward_func_names, needle)
+                if midx is None:
+                    return None
+                return metric_rewards_per_func[:, midx]
+
+            conf_fmt = _lookup_metric("format_confidence_segment")
+            if conf_fmt is not None:
+                self._metrics[mode]["stpo/format_confidence_segment_ratio"].append(
+                    conf_fmt.float().mean().item()
+                )
+                if valid_bool.any():
+                    self._metrics[mode][
+                        "stpo/format_confidence_segment_ratio_valid_answer"
+                    ].append(conf_fmt[valid_bool].float().mean().item())
+
+            mean_conf = _lookup_metric("mean_confidence")
+            if mean_conf is not None:
+                self._metrics[mode]["stpo/mean_confidence"].append(
+                    mean_conf.float().mean().item()
+                )
+                if valid_bool.any():
+                    self._metrics[mode]["stpo/mean_confidence_valid_answer"].append(
+                        mean_conf[valid_bool].float().mean().item()
+                    )
+
+            one_zero = _lookup_metric("confidence_one_or_zero")
+            if one_zero is not None:
+                self._metrics[mode]["stpo/confidence_one_or_zero_ratio"].append(
+                    one_zero.float().mean().item()
+                )
+                if valid_bool.any():
+                    self._metrics[mode][
+                        "stpo/confidence_one_or_zero_ratio_valid_answer"
+                    ].append(one_zero[valid_bool].float().mean().item())
 
         rewards_per_func = rewards_per_func * valid_mask.unsqueeze(1)
         valid_ratio = valid_mask.mean().item() if valid_mask.numel() else 0.0
         self._metrics[mode]["valid_answer_ratio"].append(valid_ratio)
 
         weight_vector = self.reward_weights.to(rewards_per_func.device)
-
-        def _combine_rewards(indices: list[int]) -> torch.Tensor:
-            if not indices:
-                return torch.zeros(
-                    rewards_per_func.size(0),
-                    dtype=rewards_per_func.dtype,
-                    device=rewards_per_func.device,
-                )
-            weights = weight_vector[indices].unsqueeze(0)
-            selected = rewards_per_func[:, indices]
-            return (selected * weights).sum(dim=1)
-
-        answer_rewards = _combine_rewards(self.answer_reward_indices)
-        confidence_rewards = _combine_rewards(self.confidence_reward_indices)
-        total_rewards = answer_rewards + confidence_rewards
+        total_rewards = (rewards_per_func * weight_vector.unsqueeze(0)).sum(dim=1)
 
         if total_rewards.numel() % C != 0:
             raise ValueError(
@@ -1045,10 +1302,9 @@ class CustomTrainer(mtpo.CustomTrainer):
             )
 
         # For round-2, advantages should reflect rewards that *vary across confidence rollouts* for the
-        # same selected answer. Using `total_rewards` (instead of `confidence_rewards` only) is important
-        # because some "answer-side" rewards (e.g. full-completion `format`) still depend on the
-        # confidence continuation and would otherwise provide no gradient signal, making format easier to
-        # collapse and hard to recover (brier is gated by format in our reward fns).
+        # same selected answer. `total_rewards` is the weighted sum over the configured confidence-side
+        # reward channels (self.reward_funcs). If you include answer-dependent channels here, they still
+        # only update confidence tokens via the token mask.
         grouped_conf = total_rewards.view(-1, C)
         h_eff_local = torch.tensor(h_eff_per_group, device=device, dtype=torch.long)
         h_eff_global = mtpo.gather(h_eff_local).to(torch.long)

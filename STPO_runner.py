@@ -10,7 +10,8 @@ from arguments import ModelConfig, STPOConfig, STPOScriptArguments
 from dataset_processing import process_dataset
 from datasets import load_dataset
 from reward_fns import (
-    accuracy_reward,
+    accuracy_answer_segment_reward,
+    brier_confidence_segment_reward,
     brier_reward,
     confidence_one_or_zero,
     format_answer_segment_reward,
@@ -79,21 +80,42 @@ def main(script_args, training_args, model_args):
 
     dataset = load_dataset(script_args.dataset_name, name=script_args.dataset_config)
 
+    answer_reward_names = (
+        script_args.answer_reward_funcs
+        if script_args.answer_reward_funcs is not None
+        else script_args.answer_selection_reward_funcs
+    )
+    confidence_reward_names = (
+        script_args.confidence_reward_funcs
+        if script_args.confidence_reward_funcs is not None
+        else script_args.reward_funcs
+    )
+
     # STPO relies on segment-level format rewards:
     # - answer selection must filter to format-correct answers (so confidence ground-truth is well-defined)
-    # - confidence rollout should be constrained by its own segment-format reward
-    if "format_answer_segment" not in script_args.answer_selection_reward_funcs:
+    # - confidence rollout should be constrained by a confidence-side format reward
+    if not any(
+        x in script_args.answer_selection_reward_funcs
+        for x in ["format_answer_segment", "format"]
+    ):
         raise ValueError(
-            "STPO requires 'format_answer_segment' in answer_selection_reward_funcs "
-            "to enable format-gated answer selection."
+            "STPO requires an answer-side format reward in answer_selection_reward_funcs "
+            "(one of: 'format_answer_segment', 'format') to enable format-gated answer selection."
         )
-    if "format_confidence_segment" not in script_args.reward_funcs:
+    if not any(
+        x in confidence_reward_names for x in ["format_confidence_segment", "format"]
+    ):
         raise ValueError(
-            "STPO requires 'format_confidence_segment' in reward_funcs "
-            "to constrain the confidence segment format."
+            "STPO requires a confidence-side format reward in confidence_reward_funcs "
+            "(one of: 'format_confidence_segment', 'format') to constrain confidence rollouts."
         )
 
-    # Training reward functions (computed on full completion)
+    # Confidence-training reward functions (computed on full completion)
+    brier_impl = (
+        brier_confidence_segment_reward
+        if "format_confidence_segment" in confidence_reward_names
+        else brier_reward
+    )
     REWARD_FUNCS_REGISTRY = {
         "format": partial(format_reward, format_pattern=script_args.format_pattern),
         "format_answer_segment": partial(
@@ -102,15 +124,33 @@ def main(script_args, training_args, model_args):
         "format_confidence_segment": partial(
             format_confidence_segment_reward, format_pattern=script_args.format_pattern
         ),
-        "accuracy": partial(accuracy_reward, format_pattern=script_args.format_pattern),
-        "brier": partial(brier_reward, format_pattern=script_args.format_pattern),
+        "accuracy": partial(
+            accuracy_answer_segment_reward, format_pattern=script_args.format_pattern
+        ),
+        "brier": partial(brier_impl, format_pattern=script_args.format_pattern),
         "log_likelihood": partial(
             log_likelihood_reward, format_pattern=script_args.format_pattern
         ),
         "mean_confidence": mean_confidence_reward,
         "confidence_one_or_zero": confidence_one_or_zero,
     }
-    reward_funcs = [REWARD_FUNCS_REGISTRY[func] for func in script_args.reward_funcs]
+    confidence_reward_funcs = [
+        REWARD_FUNCS_REGISTRY[func] for func in confidence_reward_names
+    ]
+
+    if script_args.confidence_reward_funcs is not None:
+        # STPO uses confidence_reward_weights for training. Map it onto training_args.reward_weights
+        # (used internally by the base trainer for weighting reward channels).
+        if script_args.confidence_reward_weights is not None:
+            training_args.reward_weights = script_args.confidence_reward_weights
+        elif getattr(training_args, "reward_weights", None) is not None and len(
+            training_args.reward_weights
+        ) != len(confidence_reward_funcs):
+            raise ValueError(
+                "confidence_reward_funcs is set but training_args.reward_weights length does not match; "
+                "please set confidence_reward_weights explicitly or remove reward_weights from the config "
+                f"({len(training_args.reward_weights)} vs {len(confidence_reward_funcs)})."
+            )
 
     # Answer-selection reward functions (computed on answer-only completion)
     sel_pattern = script_args.answer_selection_format_pattern or "ta"
@@ -122,7 +162,7 @@ def main(script_args, training_args, model_args):
         "format_confidence_segment": partial(
             format_confidence_segment_reward, format_pattern=sel_pattern
         ),
-        "accuracy": partial(accuracy_reward, format_pattern=sel_pattern),
+        "accuracy": partial(accuracy_answer_segment_reward, format_pattern=sel_pattern),
         "brier": partial(brier_reward, format_pattern=sel_pattern),
         "log_likelihood": partial(log_likelihood_reward, format_pattern=sel_pattern),
         "mean_confidence": mean_confidence_reward,
@@ -132,6 +172,12 @@ def main(script_args, training_args, model_args):
         SELECTION_REWARD_FUNCS_REGISTRY[func]
         for func in script_args.answer_selection_reward_funcs
     ]
+
+    # Answer-training reward functions (computed on answer-only completion)
+    answer_reward_funcs = [SELECTION_REWARD_FUNCS_REGISTRY[func] for func in answer_reward_names]
+
+    # Metric-only reward functions (computed for logging only, on full completion by default)
+    metric_reward_funcs = [REWARD_FUNCS_REGISTRY[func] for func in script_args.metric_reward_funcs]
 
     dataset = process_dataset(dataset, script_args)
 
@@ -154,11 +200,20 @@ def main(script_args, training_args, model_args):
     if script_args.eval_subset_size is not None:
         eval_dataset = eval_dataset.select(range(script_args.eval_subset_size))
 
+    answer_reward_weights = script_args.answer_reward_weights
+    if answer_reward_weights is None and script_args.answer_reward_funcs is None:
+        # Backward-compatible default: if answer_reward_funcs is not explicitly set, use the
+        # same weights as answer selection (previous STPO behavior used selection scores).
+        answer_reward_weights = script_args.answer_selection_reward_weights
+
     trainer = CustomTrainer(
         model=model_args.model_name_or_path,
-        reward_funcs=reward_funcs,
+        reward_funcs=confidence_reward_funcs,
         answer_selection_reward_funcs=answer_selection_reward_funcs,
         answer_selection_reward_weights=script_args.answer_selection_reward_weights,
+        answer_reward_funcs=answer_reward_funcs,
+        answer_reward_weights=answer_reward_weights,
+        metric_reward_funcs=metric_reward_funcs,
         answer_selection_format_pattern=sel_pattern,
         answer_selection_strategy=script_args.answer_selection_strategy,
         answer_selection_balanced_correct_fraction=script_args.answer_selection_balanced_correct_fraction,

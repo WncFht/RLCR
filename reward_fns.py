@@ -106,13 +106,31 @@ def format_answer_segment_reward(format_pattern, completions, **kwargs):
 
 
 def format_confidence_segment_reward(format_pattern, completions, **kwargs):
-    """只校验 analysis+confidence（或仅 confidence）片段的格式，并检查数值范围。"""
+    """只校验 answer 之后片段的格式，并检查数值范围。
+
+    - 若 `format_pattern` 的 analysis(`b`) 位于 answer(`a`) 之后（例如 `tabc`），则要求片段必须为
+      `<analysis>...</analysis><confidence>...</confidence>`。
+    - 否则（例如 `tac` / `tbac`），要求片段仅为 `<confidence>...</confidence>`。
+    """
     completion_contents = [completion[0]["content"] for completion in completions]
     rewards = []
-    conf_regex = re.compile(
-        r"\s*(?:<analysis>[\s\S]*?</analysis>\s*)?<confidence>[\s\S]*?</confidence>\s*\Z",
-        re.DOTALL | re.IGNORECASE,
-    )
+    fmt = str(format_pattern or "").lower()
+    a_pos = fmt.find("a")
+    b_pos = fmt.find("b")
+    require_analysis_after_answer = b_pos != -1 and a_pos != -1 and b_pos > a_pos
+
+    if require_analysis_after_answer:
+        conf_regex = re.compile(
+            r"\s*<analysis>[\s\S]*?</analysis>\s*<confidence>[\s\S]*?</confidence>\s*\Z",
+            re.DOTALL | re.IGNORECASE,
+        )
+    else:
+        # Backward-compatible: allow analysis to be optionally present when the format does not
+        # require an analysis span after the answer (e.g. `tac`, `tbac`).
+        conf_regex = re.compile(
+            r"\s*(?:<analysis>[\s\S]*?</analysis>\s*)?<confidence>[\s\S]*?</confidence>\s*\Z",
+            re.DOTALL | re.IGNORECASE,
+        )
     confidence_pattern = re.compile(
         r"<confidence>(.*?)</confidence>", re.DOTALL | re.IGNORECASE
     )
@@ -129,6 +147,91 @@ def format_confidence_segment_reward(format_pattern, completions, **kwargs):
         except ValueError:
             rewards.append(0.0)
     return rewards
+
+
+def accuracy_answer_segment_reward(format_pattern, completions, answer, source=None, **kwargs):
+    """Accuracy reward gated only by the answer segment format.
+
+    Unlike `accuracy_reward`, this does NOT require the full completion to match `format_pattern`
+    (e.g. it does not gate on `<analysis>/<confidence>`). It only checks that the completion contains
+    a well-formed `<think>...</think><answer>...</answer>` segment (up to the last `</answer>`), and
+    then evaluates correctness from the extracted answer text.
+    """
+    ans_pattern = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.MULTILINE | re.IGNORECASE)
+    answer_regex = re.compile(
+        r".*<think>[\s\S]*?</think>\s*<answer>[\s\S]*?</answer>\s*\Z",
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    completion_contents = [completion[0]["content"] for completion in completions]
+    eval_contents = [e for e in answer]
+    matches = []
+
+    use_exact_match = (
+        source is not None
+        and isinstance(source, (list, tuple))
+        and len(source) > 0
+        and source[0] == "hotpot"
+    )
+
+    for content, e in zip(completion_contents, eval_contents):
+        before, _ = _split_completion_by_last_answer(content)
+        if before is None or not re.match(answer_regex, before):
+            matches.append(0.0)
+            continue
+
+        ans_matches = ans_pattern.findall(before)
+        last_answer = ans_matches[-1] if ans_matches else ""
+        if use_exact_match:
+            label = exact_match_score(last_answer, e)
+        else:
+            attempt = parse(last_answer)
+            label = verify(e, attempt)
+        matches.append(float(label))
+    return matches
+
+
+def brier_confidence_segment_reward(
+    format_pattern, completions, answer, source=None, **kwargs
+):
+    """Brier reward gated only by the confidence segment format.
+
+    - Correctness label `y` is computed from the answer segment (via `accuracy_answer_segment_reward`)
+      and is independent of the confidence segment format.
+    - The reward is only defined when the post-answer segment matches
+      `format_confidence_segment_reward` (so we can reliably parse `<confidence>`).
+    """
+    conf_ok = format_confidence_segment_reward(format_pattern, completions)
+    correctness = accuracy_answer_segment_reward(
+        format_pattern, completions, answer, source=source
+    )
+
+    completion_contents = [completion[0]["content"] for completion in completions]
+    confidence_pattern = re.compile(
+        r"<confidence>(.*?)</confidence>", re.DOTALL | re.MULTILINE | re.IGNORECASE
+    )
+    matches = []
+
+    for content, y, ok in zip(completion_contents, correctness, conf_ok):
+        if ok == 0:
+            matches.append(0.0)
+            continue
+        _, after = _split_completion_by_last_answer(content)
+        if after is None:
+            matches.append(0.0)
+            continue
+        confidence_matches = confidence_pattern.findall(after)
+        last_confidence = confidence_matches[-1] if confidence_matches else ""
+        if last_confidence == "":
+            matches.append(0.0)
+            continue
+        try:
+            conf = float(last_confidence)
+            reward = 1.0 - (float(y) - conf) ** 2
+            matches.append(float(reward))
+        except Exception:
+            matches.append(0.0)
+    return matches
 
 
 def accuracy_reward(format_pattern, completions, answer, source=None, **kwargs):

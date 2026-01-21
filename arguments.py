@@ -127,6 +127,45 @@ class STPOScriptArguments(GRPOScriptArguments):
         },
     )
 
+    # -------------------------
+    # STPO training reward split
+    # -------------------------
+    answer_reward_funcs: Optional[list[str]] = field(
+        default=None,
+        metadata={
+            "help": "Reward functions applied to round-1 answer-only samples for training. "
+            "If unset, defaults to answer_selection_reward_funcs for backward compatibility."
+        },
+    )
+    answer_reward_weights: Optional[list[float]] = field(
+        default=None,
+        metadata={
+            "help": "Weights for answer_reward_funcs. If None, defaults to answer_selection_reward_weights when "
+            "answer_reward_funcs is unset; otherwise all weights are 1.0."
+        },
+    )
+    confidence_reward_funcs: Optional[list[str]] = field(
+        default=None,
+        metadata={
+            "help": "Reward functions applied to round-2 confidence samples for training. "
+            "If unset, defaults to reward_funcs (legacy GRPOScriptArguments field)."
+        },
+    )
+    confidence_reward_weights: Optional[list[float]] = field(
+        default=None,
+        metadata={
+            "help": "Weights for confidence_reward_funcs. If None, uses training args reward_weights if provided; "
+            "otherwise all weights are 1.0."
+        },
+    )
+    metric_reward_funcs: list[str] = field(
+        default_factory=list,
+        metadata={
+            "help": "Reward functions computed for logging only (do NOT affect training). "
+            "Use this instead of setting reward_weights to 0.0."
+        },
+    )
+
 
 @dataclass
 class GRPOConfig(trl.GRPOConfig):

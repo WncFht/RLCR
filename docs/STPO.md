@@ -37,15 +37,14 @@ STPO 的核心动机：**先用更大的预算采样更多 candidate answers（R
 沿用 MTPO 的 baseline 思路，但 STPO 把“选答案”和“训 confidence”拆开了：
 
 ### 2.1 Answer advantage（Round-1）
-- **使用 `answer_selection_reward_funcs` 的打分**（在 answer-only completion 上计算）作为 Round-1 的 reward 信号。
-- **Baseline（按 prompt 分组）**：对同一 prompt 下 `C` 个 candidates 的 selection score 做 mean/std 得到 baseline，得到 `A_ans`。
+- Round-1 的 reward 来自 `answer_reward_funcs`（在 answer-only completion 上计算）。
+- **Baseline（按 prompt 分组）**：对同一 prompt 下 `C` 个 candidates 的 answer score 做 mean/std 得到 baseline，得到 `A_ans`。
 - **作用位置**：`A_ans` 只作用在 Round-1 的 answer-only 样本的 answer 段 token 上。
   - 额外注意：answer-only 样本的 terminal `eos` 不会被纳入 answer loss（避免强化“`</answer>` 后立刻 EOS”导致 Round-2 续写崩溃）。
 
 ### 2.2 Confidence advantage（Round-2）
-- Round-2 的 reward 来自 `reward_funcs`（见后文），只在 **answer+confidence 的样本**上计算。
+- Round-2 的 reward 来自 `confidence_reward_funcs`，只在 **answer+confidence 的样本**上计算。
 - **Baseline（按 answer 分组）**：对每个 selected answer 下 `H_eff` 个 confidence 的 reward 做 mean/std 得到 `A_conf`。
-- 当前实现里，Round-2 advantage 用的是 `total_rewards = answer_rewards + confidence_rewards`（按 reward 名称自动归类），这样像 `accuracy` 这类“名义上是 answer-side、但会被 format gate 影响”的 reward 也能给 confidence token 提供修复格式的梯度。
 
 Token mask：
 - `A_ans` 只作用在 Round 1 的 answer-only 样本的 answer 段 token（共 `C` 个样本）。
@@ -66,36 +65,51 @@ Token mask：
 - `answer_selection_format_pattern`：选 answer 时的格式 pattern（默认建议 `ta`）
 - `answer_selection_strategy`：选 answer 的策略（默认 `random`；可选 `topk` / `balanced_accuracy`）
 - `answer_selection_balanced_correct_fraction`：`balanced_accuracy` 时正确样本占比（默认 0.5）
+- `answer_reward_funcs` / `answer_reward_weights`：Round-1 的训练 reward（只更新 answer 段 token；若不配置默认等于 `answer_selection_reward_funcs`）
+- `confidence_reward_funcs` / `confidence_reward_weights`：Round-2 的训练 reward（只更新 confidence 段 token；若不配置默认等于旧字段 `reward_funcs`）
+- `metric_reward_funcs`：只用于日志的 reward（不参与训练，用来记录 mean confidence 等指标）
+
+（兼容）旧字段：
+- `reward_funcs` / `reward_weights`：未配置 `confidence_reward_funcs` 时仍可用；建议迁移到 `confidence_reward_funcs` / `confidence_reward_weights`。
 
 ## 4. Reward funcs 如何“加在不同部分上”
 
-配置里有两套 reward：
+配置里有 4 组 reward（前三组影响训练，最后一组只打点）：
 
-### 4.1 `answer_selection_reward_funcs`（只作用在 Answer selection / Round-1）
+### 4.1 `answer_selection_reward_funcs`（只用于 selection，不产生梯度）
 - 这些 reward 在 **answer-only completion** 上计算，用来给 `C` 个 candidates 打分并选择进入 Round-2 的 answers。
 - **强烈建议包含** `format_answer_segment`：它既用于 selection 的 score，也用于“format-gated selection”的 eligibility（只选 format 正确的 answers）。
 
-### 4.2 `reward_funcs`（只作用在 Round-2 的 confidence token）
-- 这些 reward 只在 **answer+confidence completion** 上计算（Round-2 样本）。
-- 如果某个 selected answer 的 answer 段 format 不正确，则对应的 Round-2 样本会被标记为 invalid，**这些 reward 会被乘 0（不计入训练，也不计入对应 reward 指标）**。
+### 4.2 `answer_reward_funcs`（Round-1：只更新 answer token）
+- 这些 reward 在 **answer-only completion** 上计算，形成 `A_ans`，并且只乘 `answer_token_mask`（只更新 Round-1 的 answer 段 token）。
+- 典型配置：`[format_answer_segment, accuracy]`（同时保证格式与正确性）。
 
-Reward 名称到“Answer/Confidence side”的归类规则来自 `MTPO_Trainer.py` 的启发式关键词：
-- 名称包含 `format_answer` → answer-side
-- 名称包含 `format_confidence` 或包含 `brier/confidence/log_likelihood` → confidence-side
-- 其他（例如 `accuracy`）→ answer-side
+### 4.3 `confidence_reward_funcs`（Round-2：只更新 confidence token）
+- 这些 reward 在 **answer+confidence completion** 上计算，形成 `A_conf`，并且只乘 `confidence_token_mask`（只更新 Round-2 的 confidence 段 token）。
+- 若 selected answer 的 answer 段 format 不正确，则对应的 Round-2 样本会被标记为 invalid，**这些 reward 会被乘 0（不计入训练）**。
+- 建议把它保持“纯 confidence”：例如只用 `[format_confidence_segment, brier]` 来训练校准与格式。
+
+### 4.4 `metric_reward_funcs`（仅日志，不参与训练）
+- 这些 reward 在 Round-2 样本上计算，仅用于记录指标（例如 `stpo/mean_confidence`），不会进入 loss。
+- 用它来替代“把 `reward_weights` 设为 0.0 只为了打点”的做法。
 
 ## 5. 训练/日志指标（常见）
 
 STPO 训练时常看的指标含义（wandb key）：
 
-- `stpo/candidate_answer_close_ratio`：Round-1 candidates 里能找到闭合 `</answer>` 的比例（用于判断 answer 段是否容易崩）。
-- `stpo/candidate_answer_finish_reason_stop_ratio`：Round-1 candidates 的 vLLM `finish_reason == stop` 比例（停止条件是否有效）。
-- `stpo/candidate_answer_format_ok_ratio`：Round-1 candidates 里 answer 段 format 正确的比例（由 `format_answer_segment` 判定）。
-- `stpo/selection_selected_valid_ratio`：被选中的 answers 里 answer 段 format 正确的比例（按“被选中的 answer 个数”统计）。
+- `stpo/format_answer_close_ratio`：Round-1 candidates 里能找到闭合 `</answer>` 的比例（用于判断 answer 段是否容易崩）。
+- `stpo/answer_finish_reason_stop_ratio`：Round-1 candidates 的 vLLM `finish_reason == stop` 比例（停止条件是否有效）。
+- `stpo/format_answer_segment_ratio`：Round-1 candidates 里 answer 段 format 正确的比例（由 `format_answer_segment` 判定）。
+- `stpo/format_answer_selected_ratio`：被选中的 answers 里 answer 段 format 正确的比例（按“被选中的 answer 个数”统计）。
 - `stpo/num_answer_selected_eff`：平均每个 prompt 的 `G_eff`。
 - `stpo/num_confidence_generations_eff`：平均每个 prompt 的 `H_eff`。
 - `valid_answer_ratio`：Round-2 confidence 样本里“其对应 answer 段 format 正确”的比例（按“confidence 样本数”统计，会被 `H_eff` 加权）。
-- `rewards/<name>`：每个 reward 函数在 Round-2 样本上的均值（invalid 的样本已被乘 0）。
+- `stpo/format_confidence_segment_ratio`：Round-2 样本中 confidence 段 format 正确的比例（不按 answer validity mask）。
+- `stpo/format_confidence_segment_ratio_valid_answer`：同上，但只统计 answer 段有效的 Round-2 样本。
+- `stpo/mean_confidence` / `stpo/mean_confidence_valid_answer`：Round-2 的平均 confidence（以及仅对有效 answer 的平均）。
+- `stpo/confidence_one_or_zero_ratio` / `stpo/confidence_one_or_zero_ratio_valid_answer`：Round-2 confidence 接近 0 或 1 的比例（以及仅对有效 answer 的比例）。
+- （注）`stpo/format_confidence_segment_ratio` / `stpo/mean_confidence` / `stpo/confidence_one_or_zero_ratio` 只有在 `confidence_reward_funcs` 或 `metric_reward_funcs` 里配置了对应 reward 时才会记录。
+- `rewards/<name>`：每个 reward 函数的均值（STPO 会分别在 Round-1 / Round-2 上计算对应的 reward，并统一用该命名风格记录）。
 - `rewards/<name>/group_std`：同一 prompt 的 `C` 个 Round-2 样本在该 reward 上的组内方差水平（越大表示不同 confidence rollout 差异越大）。
 - `rewards/<name>/answer_std`：同一 answer 的 `H_eff` 个 confidence rollout 在该 reward 上的方差水平（均值后再对 prompt 平均）。
 - `spans/answer_length` / `spans/confidence_length` / `spans/split_ratio`：生成长度相关统计（只统计有效样本；candidate 样本不参与 confidence-length）。
@@ -105,10 +119,12 @@ STPO 训练时常看的指标含义（wandb key）：
 这些 reward 的实现位于 `src/RLCR/reward_fns.py`：
 
 - `format_answer_segment`：只检查 “`<think>...</think><answer>...</answer>`” 片段是否格式正确（按最后一个 `</answer>` 切分）。
-- `format_confidence_segment`：只检查 answer 之后的片段是否形如 “`<analysis>...</analysis><confidence>...</confidence>`”（`<analysis>` 允许缺省），并检查最后一个 confidence 能解析为 `[0,1]` 的 float。
+- `format_confidence_segment`：只检查 answer 之后的片段是否形如 “`<analysis>...</analysis><confidence>...</confidence>`”，并检查最后一个 confidence 能解析为 `[0,1]` 的 float。
+  - 当 `format_pattern` 为 `tabc`（analysis 在 answer 之后）时：`<analysis>...</analysis>` **必须出现**（否则为 0）。
+  - 其它 `format_pattern` 下为兼容历史实现：`<analysis>` 仍允许缺省。
 - `format`：检查完整输出的标签顺序是否符合 `format_pattern`（例如 `tabc`），并对 confidence 数值做范围校验。
-- `accuracy`：在满足完整 `format_pattern` 的前提下，抽取最后一个 `<answer>...</answer>` 并用 `math_verify` 计算是否正确（格式不合法则为 0）。
-- `brier`：在满足完整 `format_pattern` 的前提下，基于 correctness 与 `confidence` 计算 `1 - (y - p)^2`（格式不合法则为 0）。
+- `accuracy`（STPO 中实际使用 `accuracy_answer_segment`）：只 gate answer 段格式（`<think>...</think><answer>...</answer>`），不依赖 confidence 段格式，再用 `math_verify` 判断正确性。
+- `brier`（当启用 `format_confidence_segment` 时 STPO 中实际使用 `brier_confidence_segment`）：correctness 来自 answer 段，brier 只 gate confidence 段格式，避免被 full-format gate 绑死。
 - `log_likelihood`：在满足完整 `format_pattern` 的前提下，计算 `log p(y|confidence)`（格式不合法给一个很小的负值）。
 - `mean_confidence`：抽取最后一个 `<confidence>` 的数值并 clip 到 `[0,1]`（不做完整格式校验，属于弱正则）。
 - `confidence_one_or_zero`：鼓励 confidence 接近 0 或 1（不做完整格式校验，属于弱正则）。

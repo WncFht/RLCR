@@ -17,8 +17,26 @@ answer_selection_strategy: "random"
 answer_selection_balanced_correct_fraction: 0.5
 answer_selection_reward_funcs:
 - accuracy
-- format
+- format_answer_segment
 answer_selection_reward_weights: [1.0, 0.1]
+
+# STPO script options (training rewards)
+# - Round-1 (answer-only): only updates answer tokens
+answer_reward_funcs:
+- accuracy
+- format_answer_segment
+answer_reward_weights: [1.0, 0.1]
+
+# - Round-2 (answer+confidence): only updates confidence tokens
+confidence_reward_funcs:
+- format_confidence_segment
+- brier
+confidence_reward_weights: [0.5, 0.5]
+
+# - Metrics-only (logged, not trained)
+metric_reward_funcs:
+- mean_confidence
+- confidence_one_or_zero
 
 # STPO trainer config
 bf16: true
@@ -52,13 +70,6 @@ per_device_train_batch_size: 8
 push_to_hub: false
 report_to:
 - wandb
-reward_funcs:
-- format
-- accuracy
-- brier
-- mean_confidence
-- confidence_one_or_zero
-reward_weights: [0.5, 0.5, 0.5, 0.000001, 0.000001]
 save_strategy: "steps"
 save_steps: 60
 save_total_limit: 1
